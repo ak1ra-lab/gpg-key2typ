@@ -1,0 +1,639 @@
+#!/usr/bin/env python3
+"""Print GnuPG keys as keysigning slips, rendered as Typst source.
+
+`gpg-key2typ` is a reimplementation of gpg-key2ps(1) from the Debian
+signing-party package.  Like the original, it asks gpg for the requested
+keys, lays their fingerprints and User IDs out on paper slips, and repeats
+each slip to fill a sheet.  Unlike the original, it writes Typst markup to
+standard output instead of PostScript, so the result can be compiled and
+restyled with Typst:
+
+    gpg-key2typ -p a4 Alice Bob > slips.typ
+    typst compile slips.typ slips.pdf
+
+The slip content, the field positions inside a slip, and the command line
+options follow gpg-key2ps; `-o` and `--qr` are extensions.
+"""
+
+from __future__ import annotations
+
+import getopt
+import os
+import re
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import IO, Sequence
+
+PROGRAM = "gpg-key2typ"
+VERSION = "0.1.0"
+
+MM_PER_PT = 25.4 / 72.0
+
+# Slip geometry, in points (1/72 inch), following gpg-key2ps: the label,
+# key summary, creation stamp, and comment columns.  User ID values sit in
+# the summary column (x = 70), unlike gpg-key2ps, whose far-right column
+# would squeeze long UIDs.
+LINE_HEIGHT_PT = 10.0
+SLIP_PAD_Y_PT = 5.0
+SLIP_STROKE_PT = 0.5
+PAGE_MARGIN_PT = 7 * 72 / 25.4
+LABEL_X_PT = 50.0
+VALUE_X_PT = 70.0
+DATE_X_PT = 150.0
+COMMENT_X_PT = 200.0
+RULE_X_PT = 30.0
+RULE_STROKE_PT = 0.5
+
+# Fingerprint QR codes (the `--qr` extension).  A QR lives in the left
+# gutter of a key block, left of the first text position (50pt), so it
+# never overlaps the upstream line layout.
+QR_PACKAGE = "@preview/qrypst:0.1.1"
+QR_SIZE_PT = 48.0
+QR_X_PT = 1.0
+QR_ECC = "M"
+QR_QUIET = 4
+# Byte-mode capacities of QR versions 1-10 at error-correction level M.
+QR_BYTE_CAPACITY_M = (14, 26, 42, 62, 84, 106, 122, 152, 180, 213)
+
+# Public key algorithms, as printed by gpg-key2ps.  Unknown values print
+# as "xxx" like the original's catch-all entry for algorithm 20.
+ALGORITHMS = {
+    1: "rsa",
+    2: "rsa",
+    3: "rsa",
+    16: "elg",
+    17: "dsa",
+    18: "ecdh",
+    19: "ecdsa",
+    20: "xxx",
+    22: "eddsa",
+}
+
+REVOKED_STYLES = ("hide", "show", "grey", "note", "strike")
+
+# Records gpg can emit that carry nothing for a slip.
+SKIPPED_RECORDS = frozenset({"tru", "uat", "spk", "grp", "cfg", "rvk"})
+
+# Fallback paper sizes in portrait millimetres.  paperconf is preferred
+# when installed; this table covers the common names without libpaper and
+# keeps `-p` deterministic.
+PAPERS_MM = {
+    "a2": (420.0, 594.0),
+    "a3": (297.0, 420.0),
+    "a4": (210.0, 297.0),
+    "a5": (148.0, 210.0),
+    "a6": (105.0, 148.0),
+    "b4": (250.0, 353.0),
+    "b5": (176.0, 250.0),
+    "letter": (215.9, 279.4),
+    "legal": (215.9, 355.6),
+    "ledger": (279.4, 431.8),
+    "tabloid": (279.4, 431.8),
+    "executive": (184.15, 266.7),
+}
+
+
+class PaperSizeError(Exception):
+    """A paper size could not be resolved."""
+
+
+def mm_to_pt(mm: float) -> float:
+    return mm / MM_PER_PT
+
+
+def pt_to_mm(pt: float) -> float:
+    return pt * MM_PER_PT
+
+
+@dataclass(frozen=True)
+class Paper:
+    """A sheet in portrait orientation, measured in points."""
+
+    width_pt: float
+    height_pt: float
+
+
+@dataclass(frozen=True)
+class Run:
+    """A text fragment printed at an absolute x offset inside a slip."""
+
+    x: float
+    text: str
+
+
+@dataclass
+class Line:
+    """One text line (or separator rule) of a slip."""
+
+    kind: str  # "pub", "fpr", "uid", "sub", or "rule"
+    runs: list[Run] = field(default_factory=list)
+    revoked: bool = False
+
+
+@dataclass
+class Key:
+    lines: list[Line] = field(default_factory=list)
+    fingerprint: str = ""
+
+
+@dataclass(frozen=True)
+class Options:
+    paper_size: str | None = None
+    output: str | None = None
+    show_subkeys: bool = False
+    revoked_style: str = "hide"
+    one_column: bool = False
+    qr: bool = False
+
+
+@dataclass(frozen=True)
+class Layout:
+    """How the slips tile onto one sheet."""
+
+    page_width_pt: float  # portrait short edge
+    page_height_pt: float  # portrait long edge
+    columns: int
+    slip_width_pt: float
+    slip_height_pt: float
+    rows: int
+
+    @property
+    def slip_count(self) -> int:
+        return self.rows * self.columns
+
+
+# --------------------------------------------------------------------------
+# Paper sizes
+# --------------------------------------------------------------------------
+
+
+def resolve_paper(name: str | None) -> Paper:
+    """Resolve the requested sheet size; the default is A4.
+
+    Named sizes are first looked up in the built-in table, then passed to
+    libpaper's paperconf when it is installed.
+    """
+    if name is None:
+        width_mm, height_mm = PAPERS_MM["a4"]
+        return Paper(mm_to_pt(width_mm), mm_to_pt(height_mm))
+    if size := PAPERS_MM.get(name.lower()):
+        width_mm, height_mm = size
+        return Paper(mm_to_pt(width_mm), mm_to_pt(height_mm))
+
+    paperconf = shutil.which("paperconf")
+    if paperconf:
+        env = dict(os.environ, PAPERSIZE=name)
+        try:
+            return Paper(
+                _paperconf_dimension(paperconf, "-w", env),
+                _paperconf_dimension(paperconf, "-h", env),
+            )
+        except (OSError, ValueError):
+            pass
+
+    raise PaperSizeError(f'unknown paper size "{name}"')
+
+
+def _paperconf_dimension(paperconf: str, option: str, env: dict[str, str]) -> float:
+    result = subprocess.run(
+        [paperconf, option],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    return float(result.stdout.strip().replace(",", "."))
+
+
+# --------------------------------------------------------------------------
+# gpg output
+# --------------------------------------------------------------------------
+
+
+def list_keys(gnupgbin: str, patterns: Sequence[str]) -> bytes:
+    """Run gpg and return its colon-separated key listing on stdout."""
+    result = subprocess.run(
+        [gnupgbin, "--list-key", "--with-fingerprint", "--with-colons", *patterns],
+        stdout=subprocess.PIPE,
+        check=False,
+    )
+    return result.stdout
+
+
+def parse_keys(colon_output: bytes, revoked_style: str, show_subkeys: bool) -> list[Key]:
+    """Turn `gpg --with-colons` output into printable keys."""
+    keys: list[Key] = []
+    key: Key | None = None
+    in_subkey = False
+
+    for raw_line in colon_output.splitlines():
+        fields = raw_line.split(b":")
+        record = fields[0].decode("ascii", "replace")
+        if record in SKIPPED_RECORDS:
+            continue
+        if record == "pub":
+            key = Key()
+            keys.append(key)
+            in_subkey = False
+            key.lines.append(_pub_line(fields))
+        elif record == "fpr":
+            if key is not None and not in_subkey:
+                key.fingerprint = _text_field(fields, 9).strip().upper()
+                key.lines.append(
+                    Line(
+                        "fpr",
+                        [
+                            Run(
+                                VALUE_X_PT,
+                                "Key fingerprint = "
+                                + format_fingerprint(key.fingerprint),
+                            )
+                        ],
+                    )
+                )
+        elif record == "uid":
+            if key is not None and (line := _uid_line(fields, revoked_style)):
+                key.lines.append(line)
+        elif record == "sub":
+            in_subkey = True
+            if key is not None and show_subkeys and (line := _sub_line(fields, revoked_style)):
+                key.lines.append(line)
+
+    return keys
+
+
+def _pub_line(fields: list[bytes]) -> Line:
+    runs = [
+        Run(LABEL_X_PT, "pub"),
+        Run(VALUE_X_PT, _key_summary(fields)),
+        Run(DATE_X_PT, _text_field(fields, 5)),
+    ]
+    if comment := _text_field(fields, 9):
+        runs.append(Run(COMMENT_X_PT, comment))
+    return Line("pub", runs)
+
+
+def _uid_line(fields: list[bytes], revoked_style: str) -> Line | None:
+    revoked = _is_revoked(fields)
+    if revoked and revoked_style == "hide":
+        return None
+    return Line(
+        "uid",
+        [Run(LABEL_X_PT, "uid"), Run(VALUE_X_PT, _text_field(fields, 9))],
+        revoked,
+    )
+
+
+def _sub_line(fields: list[bytes], revoked_style: str) -> Line | None:
+    revoked = _is_revoked(fields)
+    if revoked and revoked_style == "hide":
+        return None
+    runs = [
+        Run(LABEL_X_PT, "sub"),
+        Run(VALUE_X_PT, _key_summary(fields)),
+        Run(DATE_X_PT, _text_field(fields, 5)),
+    ]
+    return Line("sub", runs, revoked)
+
+
+def _key_summary(fields: list[bytes]) -> str:
+    """`algo bits/KEYID`, e.g. `eddsa255/DF95CC16`, as gpg-key2ps prints it."""
+    length = _text_field(fields, 2)
+    try:
+        algorithm = ALGORITHMS.get(int(_text_field(fields, 3)), "xxx")
+    except ValueError:
+        algorithm = "xxx"
+    key_id = _text_field(fields, 4)
+    return f"{algorithm}{length}/{key_id[-8:]}"
+
+
+def _is_revoked(fields: list[bytes]) -> bool:
+    return len(fields) > 1 and fields[1].startswith(b"r")
+
+
+def _text_field(fields: list[bytes], index: int) -> str:
+    raw = fields[index] if index < len(fields) else b""
+    # gpg escapes bytes that are not safely printable as \xNN.  Undo the
+    # escapes first, then decode the result as UTF-8 so Typst gets Unicode.
+    unescaped = re.sub(
+        rb"\\x([0-9A-Fa-f]{2})", lambda match: bytes([int(match.group(1), 16)]), raw
+    )
+    return unescaped.decode("utf-8", "replace")
+
+
+def format_fingerprint(fingerprint: str) -> str:
+    """Group a fingerprint the way gpg-key2ps does.
+
+    v3 (32 hex) prints as pairs, v4 and v6 as quads; the halves are
+    separated by two spaces.
+    """
+    if len(fingerprint) == 32:
+        groups = [fingerprint[i : i + 2] for i in range(0, 32, 2)]
+        return " ".join(groups[:8]) + "  " + " ".join(groups[8:])
+    groups = [fingerprint[i : i + 4] for i in range(0, len(fingerprint), 4)]
+    if len(fingerprint) in (40, 64):
+        half = len(groups) // 2
+        return " ".join(groups[:half]) + "  " + " ".join(groups[half:])
+    return " ".join(groups)
+
+
+# --------------------------------------------------------------------------
+# Typst rendering
+# --------------------------------------------------------------------------
+
+
+def qr_geometry(payload: str) -> tuple[float, float]:
+    """Return `(module_mm, box_pt)` for a payload encoded by qrypst.
+
+    qrypst picks the smallest version that fits and draws `quiet` modules
+    of white margin around it; `box_pt` is the exact printed size.
+    """
+    size = len(payload.encode("utf-8"))
+    version = next(
+        (index for index, capacity in enumerate(QR_BYTE_CAPACITY_M, start=1) if size <= capacity),
+        None,
+    )
+    if version is None:
+        raise ValueError("fingerprint is too long for a QR code")
+    modules = 21 + 4 * (version - 1) + 2 * QR_QUIET
+    module_mm = round(pt_to_mm(QR_SIZE_PT) / modules, 6)
+    return module_mm, mm_to_pt(module_mm * modules)
+
+
+def key_height_pt(key: Key, with_qr: bool) -> float:
+    height = len(key.lines) * LINE_HEIGHT_PT
+    if with_qr and key.fingerprint:
+        _, qr_height = qr_geometry(key.fingerprint)
+        height = max(height, qr_height)
+    return height
+
+
+def compute_layout(
+    keys: Sequence[Key], paper: Paper, one_column: bool, with_qr: bool, stderr: IO[str]
+) -> Layout:
+    columns = 1 if one_column else 2
+    content_width_pt = paper.height_pt - 2 * PAGE_MARGIN_PT
+    content_height_pt = paper.width_pt - 2 * PAGE_MARGIN_PT
+    slip_width_pt = content_width_pt / columns
+    slip_height_pt = (
+        2 * SLIP_PAD_Y_PT
+        + sum(key_height_pt(key, with_qr) for key in keys)
+        + (len(keys) - 1) * LINE_HEIGHT_PT
+    )
+    rows = int(content_height_pt // slip_height_pt)
+    if rows < 1:
+        rows = 1
+        print(
+            "Warning: the slip is taller than the paper; it will overflow.",
+            file=stderr,
+        )
+    return Layout(
+        paper.width_pt, paper.height_pt, columns, slip_width_pt, slip_height_pt, rows
+    )
+
+
+def render_document(
+    keys: Sequence[Key], layout: Layout, revoked_style: str, with_qr: bool
+) -> str:
+    """Render the complete, self-contained Typst document."""
+    lines: list[str] = []
+    add = lines.append
+
+    add(f"// Generated by {PROGRAM} {VERSION}; do not edit, regenerate instead.")
+    if with_qr:
+        add(f'#import "{QR_PACKAGE}": qr')
+    add(
+        f"#set page(width: {pt_to_mm(layout.page_height_pt):.3f}mm, "
+        f"height: {pt_to_mm(layout.page_width_pt):.3f}mm, "
+        f"margin: {pt_to_mm(PAGE_MARGIN_PT):.3f}mm, fill: white)"
+    )
+    add('#set text(font: "New Computer Modern", size: 9pt, fill: black)')
+    add("#set par(leading: 0.1em, spacing: 0pt)")
+    add("#set block(spacing: 0pt)")
+    add("")
+    add(f"#let lh = {LINE_HEIGHT_PT:g}pt")
+    add(f"#let slip-w = {layout.slip_width_pt:.4f}pt")
+    add(f"#let slip-h = {layout.slip_height_pt:.4f}pt")
+    add("#let fit(avail, body) = context {")
+    add("  let natural = measure(box(body)).width")
+    add("  if natural > avail {")
+    add("    scale(x: 100% * (avail / natural), reflow: true, origin: left, box(body))")
+    add("  } else {")
+    add("    box(body)")
+    add("  }")
+    add("}")
+    add("#let put(x, avail, body) = place(top + left, dx: x, dy: 0pt, fit(avail, body))")
+    add("#let row(body) = block(width: 100%, height: lh, body)")
+    add(
+        "#let rule-row = block(width: 100%, height: lh, "
+        f"place(dx: {RULE_X_PT:g}pt, dy: lh / 2 - {RULE_STROKE_PT / 2:g}pt, "
+        f"line(length: slip-w - {2 * RULE_X_PT:g}pt, stroke: {RULE_STROKE_PT:g}pt)))"
+    )
+    add("")
+    add("#let slip = block(")
+    add(f"  width: slip-w, height: slip-h, stroke: {SLIP_STROKE_PT:g}pt,")
+    add(f"  inset: (y: {SLIP_PAD_Y_PT:g}pt),")
+    add("  stack(spacing: 0pt,")
+    for index, key in enumerate(keys):
+        if index:
+            add("    rule-row,")
+        add(
+            _key_code(
+                key,
+                with_qr,
+                revoked_style,
+                indent="    ",
+                slip_width_pt=layout.slip_width_pt,
+            )
+            + ","
+        )
+    add("  ),")
+    add(")")
+    add("")
+    columns = ", ".join("slip-w" for _ in range(layout.columns))
+    rows = ", ".join("slip-h" for _ in range(layout.rows))
+    add(f"#grid(columns: ({columns}), rows: ({rows}), inset: 0pt,")
+    add(f"  ..range({layout.slip_count}).map(_ => slip))")
+    return "\n".join(lines) + "\n"
+
+
+def _key_code(
+    key: Key, with_qr: bool, revoked_style: str, indent: str, slip_width_pt: float
+) -> str:
+    height = key_height_pt(key, with_qr)
+    rows = f",\n{indent}  ".join(
+        _row_code(line, revoked_style, slip_width_pt) for line in key.lines
+    )
+    body = f"stack(spacing: 0pt,\n{indent}  {rows},\n{indent})"
+
+    if with_qr and key.fingerprint:
+        module_mm, _ = qr_geometry(key.fingerprint)
+        body += (
+            f" + place(top + left, dx: {QR_X_PT:g}pt, dy: 0pt, "
+            f"qr({_typst_string(key.fingerprint)}, module: {module_mm:.6f}mm, "
+            f'ecc: "{QR_ECC}", quiet: {QR_QUIET}))'
+        )
+
+    return f"{indent}block(width: 100%, height: {height:.4f}pt, {body})"
+
+
+def _row_code(line: Line, revoked_style: str, slip_width_pt: float) -> str:
+    if line.kind == "rule":
+        return "rule-row"
+
+    runs = list(line.runs)
+    grey = line.revoked and revoked_style == "grey"
+    if line.revoked and revoked_style == "note" and runs:
+        runs[-1] = Run(runs[-1].x, runs[-1].text + " [revoked]")
+
+    pieces = []
+    for run in runs:
+        fill = "fill: luma(50%), " if grey else ""
+        # Text that would leave the slip is condensed to fit instead of
+        # running into the neighbouring column.
+        avail = max(slip_width_pt - run.x - 2.0, 1.0)
+        pieces.append(
+            f"put({run.x:g}pt, {avail:.4f}pt, text({fill}{_typst_string(run.text)}))"
+        )
+    if line.revoked and revoked_style == "strike":
+        pieces.append(
+            f"place(top + left, dx: {RULE_X_PT:g}pt, dy: lh / 2 - {RULE_STROKE_PT / 2:g}pt, "
+            f"line(length: slip-w - {2 * RULE_X_PT:g}pt, stroke: {RULE_STROKE_PT:g}pt))"
+        )
+    return "row(" + " + ".join(pieces) + ")"
+
+
+_STRING_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def _typst_string(value: str) -> str:
+    """A Typst string literal: only quote and backslash need escaping."""
+    escaped = "".join(
+        _STRING_ESCAPES.get(char, char if char.isprintable() else " ")
+        for char in value
+    )
+    return f'"{escaped}"'
+
+
+# --------------------------------------------------------------------------
+# Command line
+# --------------------------------------------------------------------------
+
+USAGE = f"""\
+{PROGRAM} {VERSION} - print OpenPGP keysigning slips as Typst source
+Usage: {PROGRAM} [options] keyid-or-name ...
+Options:
+ -p, --paper-size NAME    paper size (default: a4)
+ -o, --output FILE        write the Typst source to FILE (default: stdout)
+ -s, --show-subkeys       print subkey information on the slips
+ -r, --revoked-style ST   hide | show | grey | note | strike (default: hide)
+ -1                       print one column of slips instead of two
+     --qr                 add a QR code with the fingerprint to each key
+ -h, --help               print this help and exit
+ -v, --version            print version and exit
+"""
+
+SHORT_OPTIONS = "hvs1p:r:o:"
+LONG_OPTIONS = [
+    "help",
+    "version",
+    "show-subkeys",
+    "paper-size=",
+    "revoked-style=",
+    "output=",
+    "qr",
+]
+
+
+def usage(stream: IO[str]) -> None:
+    stream.write(USAGE)
+
+
+def run(argv: Sequence[str], stdout: IO[str], stderr: IO[str]) -> int:
+    try:
+        parsed, patterns = getopt.gnu_getopt(argv, SHORT_OPTIONS, LONG_OPTIONS)
+    except getopt.GetoptError as error:
+        print(f"{PROGRAM}: {error}", file=stderr)
+        usage(stderr)
+        return 1
+
+    options = Options()
+    want_help = want_version = False
+    for option, value in parsed:
+        if option in ("-h", "--help"):
+            want_help = True
+        elif option in ("-v", "--version"):
+            want_version = True
+        elif option in ("-s", "--show-subkeys"):
+            options = replace(options, show_subkeys=True)
+        elif option in ("-p", "--paper-size"):
+            options = replace(options, paper_size=value)
+        elif option in ("-r", "--revoked-style"):
+            options = replace(options, revoked_style=value)
+        elif option in ("-o", "--output"):
+            options = replace(options, output=value)
+        elif option == "-1":
+            options = replace(options, one_column=True)
+        elif option == "--qr":
+            options = replace(options, qr=True)
+
+    if want_help:
+        usage(stdout)
+        return 0
+    if want_version:
+        print(f"{PROGRAM} {VERSION}", file=stdout)
+        return 0
+    if options.revoked_style not in REVOKED_STYLES:
+        print(f'Unknown revoked-style "{options.revoked_style}".', file=stderr)
+        usage(stderr)
+        return 1
+    if not patterns:
+        usage(stderr)
+        return 1
+
+    try:
+        paper = resolve_paper(options.paper_size)
+    except PaperSizeError as error:
+        print(f"{PROGRAM}: {error}", file=stderr)
+        return 1
+
+    gnupgbin = os.environ.get("GNUPGBIN", "gpg")
+    try:
+        colon_output = list_keys(gnupgbin, patterns)
+    except FileNotFoundError:
+        print(f'{PROGRAM}: cannot run "{gnupgbin}"', file=stderr)
+        return 1
+
+    keys = parse_keys(colon_output, options.revoked_style, options.show_subkeys)
+    if not keys:
+        print("No public key found.", file=stderr)
+        return 1
+
+    try:
+        layout = compute_layout(keys, paper, options.one_column, options.qr, stderr)
+        document = render_document(keys, layout, options.revoked_style, options.qr)
+    except ValueError as error:
+        print(f"{PROGRAM}: {error}", file=stderr)
+        return 1
+
+    if options.output:
+        try:
+            Path(options.output).write_text(document, encoding="utf-8")
+        except OSError as error:
+            print(f"{PROGRAM}: cannot write {options.output!r}: {error.strerror}", file=stderr)
+            return 1
+    else:
+        stdout.write(document)
+    return 0
+
+
+def main() -> int:
+    return run(sys.argv[1:], sys.stdout, sys.stderr)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

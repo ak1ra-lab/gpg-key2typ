@@ -2,7 +2,7 @@
 
 [English](key-signing-party.md) · 简体中文
 
-[PGP 信息卡](../README.zh.md) 的流程文档：线下怎么交换卡片、回家认证之前要核对什么，以及怎么用 `caff` 自动化聚会后的工作。
+[gpg-key2typ](../README.zh.md) 的流程文档：线下怎么交换纸条、回家认证之前要核对什么，以及怎么用 `caff` 自动化聚会后的工作。
 
 ## 两阶段的 keysigning 流程
 
@@ -11,7 +11,7 @@ key signing party 的意义，就是当面确认某个指纹确实属于出示�
 ```mermaid
 flowchart TD
     subgraph P1["阶段一 · 线下"]
-        A1["交换卡片，<br/>核对彼此的指纹"]
+        A1["交换纸条，<br/>核对彼此的指纹"]
         A2{"UID 是真名？"}
         A3["核对政府签发的<br/>带照片证件"]
         A4["不查法定证件"]
@@ -41,8 +41,8 @@ flowchart TD
 
 ### 阶段一 —— 线下
 
-1. 准备好卡片（[PGP 信息卡](../README.zh.md)），或者用 `gpg-key2ps` 打普通指纹纸条；自己的指纹要熟到能核对。
-2. 和每个人交换卡片。你读出自己的指纹，对方跟着核对；双方各自记下（或扫描）对方的指纹。一定核对完整指纹——QR 码只是顺手用的。
+1. 准备好指纹纸条（`gpg-key2ps`，或者用本仓库的 [`gpg-key2typ`](../README.zh.md) 以 Typst 渲染）；自己的指纹要熟到能核对。
+2. 和每个人交换纸条。你读出自己的指纹，对方跟着核对；双方各自记下（或扫描）对方的指纹。一定核对完整指纹——扫出来的 QR 码顶多只是顺手用的。
 3. UID 是真名，就按活动或双方约定的签名规则核对政府签发的带照片证件；UID 是化名，不用查证件，改成约定一个能找到这个化名的在线渠道（Telegram、Matrix、Signal、电子邮件等）。
 4. 把核对过的东西记下来：指纹、渠道、核对内容、日期、活动。按名单进行的活动，就在打印的名单上勾选 "Fingerprint OK" 和 "ID OK"——这份标注过的名单之后可以直接喂给 `caff`。
 5. 私钥留在家里。这一步不用电脑，也不用联网。
@@ -54,8 +54,8 @@ sequenceDiagram
     actor B as Bob
 
     Note over A,B: 线下 · 离线 · 不用电脑，不碰私钥
-    A->>B: 递交信息卡
-    B->>A: 递交信息卡
+    A->>B: 递交纸条
+    B->>A: 递交纸条
     A->>B: 我读指纹，你核对
     B->>A: 我读指纹，你核对
     opt 真名 UID
@@ -127,7 +127,7 @@ flowchart LR
 - **私钥持有证明止步于 subkey。** 挑战是用对方的公钥加密的，但只有加密 subkey 的私钥能解开，所以证明的是对方握有*那个 subkey* 的私钥，而不是签发认证的主密钥。`caff` 就是这么做的，大家一般也接受；要求更高的话，可以请对方用主密钥重新签一次。签名 subkey 做的签名也只能证明那个 subkey，证明不了主密钥的私钥。
 - **一把 key 只有一个要核对的指纹。** 阶段一交换、阶段二比对的都是主密钥的指纹。subkey 也有自己的指纹，但上面没有 User ID；它们与主密钥的绑定由主密钥签发的 subkey binding signature 保证，不用逐个核对。
 - **认证按 UID 分别签。** OpenPGP 认证由主密钥对单个 User ID 签发。只认证你确实核对过绑定关系的 UID——回信的邮箱、渠道有应答的化名、证件上的姓名。`caff` 每个 UID 单独发一封信，就是为这个。
-- **指纹长度不一样。** 卡片按 40 位十六进制字符的 v4 指纹（SHA-1）排版。v6 密钥（[RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html)）是 64 位（SHA-256），需要更宽或者分两行的布局；`--rfc4880bis` 草案里的实验性 v5 密钥长度一样。
+- **指纹长度不一样。** 纸条按 40 位十六进制字符的 v4 指纹（SHA-1）排版，这是最常见的情形。v6 密钥（[RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html)）是 64 位（SHA-256）；`gpg-key2typ` 会完整打印，但一行会很长，用 `-1`（一栏）给它留足空间。`--rfc4880bis` 草案里的实验性 v5 密钥长度一样。
 - **公不公开由本人决定。** 没有同意，别把他人的密钥或你的认证传上 keyserver。[keys.openpgp.org](https://keys.openpgp.org/about/faq) 默认不传播第三方认证（只传播第一方自证的），所以在 key signing party 上签的名不会经它扩散；传统 keyserver 和项目 keyring（比如 Debian 的）另说。
 - **认证可以撤销。** 事后发现核对错了，就撤销认证（`gpg --edit-key` → `revsig`）；自己密钥的吊销证书也要收好。
 
@@ -172,6 +172,7 @@ flowchart LR
 工具：
 
 - [`signing-party`](https://salsa.debian.org/signing-party-team/signing-party) —— `caff`、`gpgparticipants`、`gpg-key2ps` 等。
+- [`gpg-key2typ`](../README.zh.md) —— 本仓库；同样的纸条，Typst 输出。
 - [`caff(1)`](https://manpages.debian.org/unstable/signing-party/caff.1.en.html)、[`gpgparticipants(1)`](https://manpages.debian.org/unstable/signing-party/gpgparticipants.1.en.html)、[`gpg-key2ps(1)`](https://manpages.debian.org/unstable/signing-party/gpg-key2ps.1.en.html)
 - [Debian 名片模板](https://www.debian.org/events/materials/business-cards/) —— 指纹纸条之外的另一条路。
 

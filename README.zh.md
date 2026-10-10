@@ -1,48 +1,91 @@
-# PGP 信息卡
+# gpg-key2typ
 
 [![GitHub](https://img.shields.io/badge/GitHub-ak1ra--lab%2Fpgp--info--card-181717?logo=github&logoColor=white)](https://github.com/ak1ra-lab/pgp-info-card)
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Typst 0.13+](https://img.shields.io/badge/Typst-0.13%2B-239DAD?logo=typst&logoColor=white)](https://typst.app/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) · 简体中文
 
-[Typst](https://typst.app/) 模板，用于 OpenPGP key signing party 的线下环节，产出一张 90 × 55 mm 的卡片：正面是密钥指纹、User ID 和需要与密钥核对的联系渠道；背面是同一指纹的 QR 码。卡片周边的流程——线下怎么交换、回家认证前要核对什么——见 [key signing party 指南](docs/key-signing-party.zh.md)。
-
-从模板新建一张卡片：
+`gpg-key2typ` 把 GnuPG 密钥串里的 OpenPGP 密钥渲染成 key signing party 用的指纹纸条：一整页带边框的小纸条，每张上都印着所请求密钥的指纹和 User ID。它是 Debian [signing-party](https://salsa.debian.org/signing-party-team/signing-party) 里 [`gpg-key2ps(1)`](https://manpages.debian.org/unstable/signing-party/gpg-key2ps.1.en.html) 的重实现，只是输出 [Typst](https://typst.app/) 源码而不是 PostScript。纸条内容、纸条内的字段位置和命令行选项都沿袭原版。
 
 ```sh
-typst init @preview/pgp-info-card:0.1.0 my-card
-cd my-card
-$EDITOR main.typ
-typst compile main.typ
+./gpg-key2typ -p a4 Alice Bob > slips.typ
+typst compile slips.typ slips.pdf
+
+# 或者直接进 PDF
+./gpg-key2typ Alice Bob | typst compile - slips.pdf
 ```
 
-PDF 里是同一张卡的两个版本：第 1–2 页是单张卡（正、背），第 3–4 页是两张 A4，每张平铺十份（正面、背面）并带虚线裁切参考线。要平铺版就用普通 A4 双面打印，再沿虚线裁开——每份都一样，双面翻页方向怎么选都能对上；只要名片大小，就打印第 1–2 页。
+输出是一张横向纸面，平铺着同一张纸条：默认两栏（`-1` 改为一栏），每个密钥块显示
 
-## 卡片
+```text
+pub eddsa255/DF95CC16 1791606480
+Key fingerprint = 21A3 835B 8A4C 5C82 8F8A  218D 4B8C 03A2 DF95 CC16
+uid Alice Example <alice@example.org>
+```
 
-模板的参数（在 `main.typ` 里改）：
+每个 User ID 一行 `uid`，加 `-s` 时每个子钥再加一行 `sub`。打印出来，沿纸条边框裁开，就可以在活动现场分发了。
 
-- `display-name`
-- `fingerprint`（每四个十六进制数字一组），显示在名字下方
-- `uids`：最多六个单行条目（由 `max-uids` 断言限制；过长的 UID 会折到缩进的第二行）
-- `contacts`：`(label, value)` 渠道对，按两列排布，label 会转成大写（设为 `none` 或 `""` 的对不会显示）；UID 越少能放下的渠道越多，`max-contacts: auto` 自动计算上限，也可以直接填数字覆盖
-- `note`：底部一行小字（默认 "Verify the fingerprint before trusting this key."）
-- `layouts`：输出哪个版本，默认 `("card", "a4")`，也可以只写 `("card",)` 或 `("a4",)`
+## 运行要求
 
-每张 A4 按 2 × 5 平铺十份 90 × 55 mm 卡片，四周留 15 mm / 11 mm。背面 QR 码里是去掉空格的指纹，扫出来的字符串，正好是你下载密钥时要核对的那一串。
+- Python 3.9 或更新（只用标准库）
+- GnuPG（`PATH` 里的 `gpg`，或用 `GNUPGBIN` 指定）
+- 用来编译输出的 [Typst](https://typst.app/) 0.13 或更新
+- 可选：libpaper 的 `paperconf`，用于内置列表之外的纸张名
+
+## 安装
+
+```sh
+install -m 755 gpg-key2typ ~/.local/bin
+# 或者用 just：
+just install
+```
+
+## 选项
+
+| 选项 | 说明 |
+| --- | --- |
+| `-p, --paper-size NAME` | 纸张尺寸。常见名字（`a4`、`a3`、`a5`、`b5`、`letter`、`legal` 等）内置；装了 libpaper 的 `paperconf` 时，其它名字交给它解析。默认：`a4`。 |
+| `-o, --output FILE` | 把 Typst 源码写进 `FILE`，而不是标准输出（*扩展*）。 |
+| `-s, --show-subkeys` | 在纸条上打印子钥信息。 |
+| `-r, --revoked-style ST` | 如何标注已吊销的 User ID 和子钥：`hide`（默认）、`show`、`grey`、`note`（追加 `[revoked]`）、`strike`（划线）。 |
+| `-1` | 只打一栏纸条，而不是两栏；User ID 很长时有用。 |
+| `--qr` | 为每个密钥块添加指纹 QR 码（*扩展*）。 |
+| `-h, --help` | 打印用法并退出。 |
+| `-v, --version` | 打印版本并退出。 |
+
+密钥参数的写法和 `gpg --list-keys` 一样：key ID、指纹或（部分）名字都行。环境变量：`GNUPGBIN`（gpg 可执行文件，默认 `gpg`）、`GNUPGHOME`（密钥串位置，gpg 自己会读）、`PAPERSIZE`（libpaper 纸张名）。
+
+## QR 码
+
+gpg-key2ps 没有 QR 码，所以这里默认也不加。`--qr` 会在每个密钥块左侧的空白栏（本来就不印字的地方）放一个 QR 码，内容是去掉空格的指纹——正好是你下载密钥时要核对的那串字符串。QR 码由 Typst 包 [`@preview/qrypst:0.1.1`](https://typst.app/universe/package/qrypst/) 绘制，首次编译时 Typst 会下载它（之后走缓存）；含静默区整枚约 17 mm 见方。
+
+有必要加 QR 码吗?没有必要——纸条的意义就是让指纹方便用眼睛核对，gpg-key2ps 也刻意止步于此。QR 码只是方便之后记录或复检指纹，不能替代开口核对；需要时再加 `--qr` 即可。
+
+## 与原版的差异
+
+- 输出 Typst 源码而不是 PostScript，写到标准输出；`-o` 和 `--qr` 是扩展，其余选项与原版一致。
+- 默认纸张固定为 A4；gpg-key2ps 跟随 libpaper 的 `/etc/papersize`。常见尺寸内置，装有 `paperconf` 时可解析其它名字。
+- User ID 保留 UTF-8；gpg-key2ps 会把它们转成 Latin-1。
+- 支持 v6 指纹（64 位十六进制，[RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html)），分组方式与 v4 一致；gpg-key2ps 只认 v3 和 v4。
+- User ID 的值紧跟在 `uid` 标签之后（x = 70 pt），不再用 gpg-key2ps 的远端值栏（x = 200 pt），长 UID 因此能用满整行；若仍会超出纸条，就横向压缩到纸条内（gpg-key2ps 会直接裁掉）。`-1` 能给长行留出最多空间。
+- 密钥之间的分隔线计入纸条高度；纸条放不下整页时在 stderr 警告；最后一张纸条不会被裁掉。
+- 创建日期打印为 Unix 时间戳——这是刻意的，因为 gpg-key2ps 就是这么打的。
+- 原先 90 × 55 mm 名片版式及其 Typst 模板已移除；本项目只做指纹纸条这件事。
+
+## Key signing party
+
+纸条背后的流程——现场核对什么、回家认证前做什么——见[《Key signing party 指南》](docs/key-signing-party.zh.md)。
 
 ## 开发
 
-仓库采用 [Typst packages](https://github.com/typst/packages) 的目录结构：`lib.typ` 是包入口，`template/` 是 `typst init` 会复制的文件。clone 后用 [justfile](justfile) 把 checkout 软链到 Typst 的包目录（不用再带 `--package-path`），并直接编译出拆分好的 PDF：
+`gpg-key2typ` 是单个无依赖的 Python 文件；测试直接加载它，并用假 `gpg` 驱动：
 
 ```sh
-just link              # 软链到 Typst 的包目录（$XDG_DATA_HOME 或 ~/.local/share）
-just init my-card      # 用本地模板新建卡片
-just compile my-card   # card.pdf（1–2 页）与 sheet.pdf（3–4 页）
+just test          # python3 -m unittest discover -s tests -v
+just slips Alice   # 在仓库里直接跑 CLI
 ```
-
-发布新版本时，记得同时更新 `typst.toml` 和 justfile 里的 `version`。
 
 ## 许可证
 

@@ -2,7 +2,7 @@
 
 English · [简体中文](key-signing-party.zh.md)
 
-Process guide for the [PGP Info Card](../README.md): the in-person exchange, the checks done at home before certifying, and the `caff` automation.
+Process guide for [`gpg-key2typ`](../README.md): the in-person exchange, the checks done at home before certifying, and the `caff` automation.
 
 ## The two-phase keysigning process
 
@@ -11,7 +11,7 @@ A key signing party proves, in person, that a fingerprint belongs to the person 
 ```mermaid
 flowchart TD
     subgraph P1["Phase 1 · in person (offline)"]
-        A1["Exchange cards,<br/>read fingerprints back"]
+        A1["Exchange slips,<br/>read fingerprints back"]
         A2{"Real-name UID?"}
         A3["Check government-issued<br/>photo ID"]
         A4["Skip the legal ID check"]
@@ -41,8 +41,8 @@ flowchart TD
 
 ### Phase 1 — in person (offline)
 
-1. Prepare your card (the [PGP Info Card](../README.md)) or plain fingerprint slips (`gpg-key2ps`), and know your own fingerprint well enough to check it.
-2. Exchange cards with each person. Read your fingerprint aloud and have the other party follow along; both parties write down (or scan) the other's fingerprint. Compare the full fingerprint — the QR code is only a convenience.
+1. Prepare fingerprint slips (`gpg-key2ps`, or this repository's [`gpg-key2typ`](../README.md) to render them with Typst), and know your own fingerprint well enough to check it.
+2. Exchange slips with each person. Read your fingerprint aloud and have the other party follow along; both parties write down (or scan) the other's fingerprint. Compare the full fingerprint — a scanned QR code is at best a convenience.
 3. If the key's User ID is a real name, check a government-issued photo ID, per the event's or the two parties' signing policy. If the User ID is a pseudonym, no legal identity check is needed; instead, agree on the online channel (Telegram, Matrix, Signal, email, …) through which that pseudonym can be reached.
 4. Record what you verified: fingerprint, channel(s), what was checked, date, and event. At list-based parties, tick the "Fingerprint OK" and "ID OK" boxes on the printed participant list — that annotated list can later be fed to `caff` directly.
 5. Leave the private key at home. Nothing in this phase needs a computer or a network.
@@ -54,8 +54,8 @@ sequenceDiagram
     actor B as Bob
 
     Note over A,B: In person · offline · no computer, no private key
-    A->>B: Hand over the info card
-    B->>A: Hand over the info card
+    A->>B: Hand over the slip
+    B->>A: Hand over the slip
     A->>B: Read my fingerprint aloud, follow along
     B->>A: Read my fingerprint aloud, follow along
     opt Real-name UID
@@ -127,7 +127,7 @@ flowchart LR
 - **Possession proof stops at the subkey.** A challenge encrypted with the key is decrypted by an encryption subkey's private key, so it proves control of *that subkey*, not of the primary key that issues certifications. This is the model `caff` uses and is generally accepted; if your policy demands more, ask for a fresh signature made by the primary key. A signature made by a signing subkey proves only that subkey — it still does not prove the primary key's private key.
 - **One fingerprint per key.** The fingerprint exchanged in Phase 1 and compared in Phase 2 is the primary key's. Subkeys have fingerprints of their own, but they carry no User IDs and are bound to the primary by the primary key's subkey binding signatures, so they are never verified separately.
 - **Certifications are per UID.** OpenPGP certifications are issued by the primary key over individual User IDs. Verify and certify only the UIDs whose binding you checked — the email address that answered, the pseudonym whose channel answered, the name on the ID you saw. `caff` sends one email per UID precisely for this reason.
-- **Fingerprint lengths differ.** The card is laid out for a 40-hex-digit v4 fingerprint (SHA-1). v6 keys ([RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html)) have 64-hex-digit fingerprints (SHA-256) and need a wider or two-line layout; the experimental v5 keys from the `--rfc4880bis` drafts have the same length.
+- **Fingerprint lengths differ.** The slips are laid out for 40-hex-digit v4 fingerprints (SHA-1), the common case. v6 keys ([RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html)) have 64-hex-digit fingerprints (SHA-256); `gpg-key2typ` prints them in full, but they run long, so give them room with `-1` (one column). The experimental v5 keys from the `--rfc4880bis` drafts have the same length.
 - **Publishing is the owner's call.** Never upload someone else's key or your certification to a keyserver without consent. Note that [keys.openpgp.org](https://keys.openpgp.org/about/faq) does not distribute third-party certifications by default (only first-party attested ones), so signatures made at a key signing party do not propagate through it; traditional keyservers and project keyrings (e.g. Debian's) behave differently.
 - **Certifications are revocable.** If a verification later turns out to be wrong, revoke the certification (`gpg --edit-key` → `revsig`), and keep your own key's revocation certificate somewhere safe.
 
@@ -172,6 +172,7 @@ Practical guidance and real-world events:
 Tools:
 
 - [`signing-party`](https://salsa.debian.org/signing-party-team/signing-party) — `caff`, `gpgparticipants`, `gpg-key2ps`, and friends.
+- [`gpg-key2typ`](../README.md) — this repository; the same slips as Typst output.
 - [`caff(1)`](https://manpages.debian.org/unstable/signing-party/caff.1.en.html), [`gpgparticipants(1)`](https://manpages.debian.org/unstable/signing-party/gpgparticipants.1.en.html), [`gpg-key2ps(1)`](https://manpages.debian.org/unstable/signing-party/gpg-key2ps.1.en.html)
 - [Debian business-card templates](https://www.debian.org/events/materials/business-cards/) — an alternative to fingerprint slips.
 

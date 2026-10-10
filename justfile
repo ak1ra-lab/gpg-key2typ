@@ -1,24 +1,20 @@
-# Package coordinates; keep in sync with typst.toml.
-version := "0.1.0"
-package := "preview/pgp-info-card"
-packages-dir := env("XDG_DATA_HOME", home_directory() / ".local/share") / "typst/packages"
-package-dir := packages-dir / package / version
-
 # show available recipes
 default:
     @just --list --unsorted
 
-# symlink this checkout into the local Typst package directory
-link:
-    mkdir -p "{{ packages-dir }}/{{ package }}"
-    ln -sfn "{{ justfile_directory() }}" "{{ package-dir }}"
+# Run the CLI from the checkout (e.g. `just slips Alice Bob > slips.typ`)
+slips *args:
+    ./gpg-key2typ {{args}}
 
-# create a new card from the template (e.g. `just init my-card`)
-init dest: link
-    typst init @{{ package }}:{{ version }} "{{ dest }}"
+# Generate slips and compile them into slips.pdf (e.g. `just pdf Alice Bob`)
+pdf *args:
+    ./gpg-key2typ {{args}} | typst compile - slips.pdf
 
-# compile a card into card.pdf and sheet.pdf (e.g. `just compile my-card`);
-# --no-pdf-tags needs Typst >= 0.14
-compile dest: link
-    typst compile --no-pdf-tags --pages 1-2 "{{ dest }}/main.typ" "{{ dest }}/card.pdf"
-    typst compile --no-pdf-tags --pages 3-4 "{{ dest }}/main.typ" "{{ dest }}/sheet.pdf"
+# Run the unit tests
+test:
+    python3 -m unittest discover -s tests -v
+
+# Symlink the CLI into ~/.local/bin
+install:
+    install -d "{{ env_var_or_default('HOME', '~') }}/.local/bin"
+    ln -sfn "{{ justfile_directory() }}/gpg-key2typ" "{{ env_var_or_default('HOME', '~') }}/.local/bin/gpg-key2typ"
