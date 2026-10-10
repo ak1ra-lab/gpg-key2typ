@@ -10,6 +10,11 @@ slips *args:
 pdf *args:
     ./gpg-key2typ {{args}} | typst compile - slips.pdf
 
+# Lint and format source code
+lint:
+    ruff check --fix tests/ gpg-key2typ
+    ruff format tests/ gpg-key2typ
+
 # Run the unit tests
 test:
     python3 -m unittest discover -s tests -v
