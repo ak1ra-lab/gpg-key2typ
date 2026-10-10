@@ -15,6 +15,10 @@ typst compile slips.typ slips.pdf
 
 # 或者直接进 PDF
 ./gpg-key2typ Alice Bob | typst compile - slips.pdf
+
+# 也可以直接从下载的密钥文件（或标准输入）读取，无需先导入：
+./gpg-key2typ -i alice-pubkey.asc > slips.typ
+curl -s https://example.org/alice.asc | ./gpg-key2typ -i - > slips.typ
 ```
 
 输出是一张横向纸面，平铺着同一张纸条：默认两栏（`-1` 改为一栏），每个密钥块显示
@@ -47,6 +51,7 @@ just install
 | 选项 | 说明 |
 | --- | --- |
 | `-p, --paper-size NAME` | 纸张尺寸。常见名字（`a4`、`a3`、`a5`、`b5`、`letter`、`legal` 等）内置；装了 libpaper 的 `paperconf` 时，其它名字交给它解析。默认：`a4`。 |
+| `-i, --input FILE` | 从 `FILE` 而不是密钥串读取密钥（`-` 表示标准输入），无需先导入（*扩展*）。 |
 | `-o, --output FILE` | 把 Typst 源码写进 `FILE`，而不是标准输出（*扩展*）。 |
 | `-s, --show-subkeys` | 在纸条上打印子钥信息。 |
 | `-r, --revoked-style ST` | 如何标注已吊销的 User ID 和子钥：`hide`（默认）、`show`、`grey`、`note`（追加 `[revoked]`）、`strike`（划线）。 |
@@ -55,7 +60,7 @@ just install
 | `-h, --help` | 打印用法并退出。 |
 | `-v, --version` | 打印版本并退出。 |
 
-密钥参数的写法和 `gpg --list-keys` 一样：key ID、指纹或（部分）名字都行。环境变量：`GNUPGBIN`（gpg 可执行文件，默认 `gpg`）、`GNUPGHOME`（密钥串位置，gpg 自己会读）、`PAPERSIZE`（libpaper 纸张名）。
+密钥参数的写法和 `gpg --list-keys` 一样：key ID、指纹或（部分）名字都行。`--input` 则改用 `gpg --show-keys` 从文件或标准输入列出密钥，不会把它们导入密钥串，因此不能和密钥参数同时使用。环境变量：`GNUPGBIN`（gpg 可执行文件，默认 `gpg`）、`GNUPGHOME`（密钥串位置，gpg 自己会读）、`PAPERSIZE`（libpaper 纸张名）。
 
 ## QR 码
 
@@ -65,7 +70,7 @@ gpg-key2ps 没有 QR 码，所以这里默认也不加。`--qr` 会在每个密�
 
 ## 与原版的差异
 
-- 输出 Typst 源码而不是 PostScript，写到标准输出；`-o` 和 `--qr` 是扩展，其余选项与原版一致。
+- 输出 Typst 源码而不是 PostScript，写到标准输出；`-i`、`-o` 和 `--qr` 是扩展，其余选项与原版一致。
 - 默认纸张固定为 A4；gpg-key2ps 跟随 libpaper 的 `/etc/papersize`。常见尺寸内置，装有 `paperconf` 时可解析其它名字。
 - User ID 保留 UTF-8；gpg-key2ps 会把它们转成 Latin-1。
 - 支持 v6 指纹（64 位十六进制，[RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html)），分组方式与 v4 一致；gpg-key2ps 只认 v3 和 v4。

@@ -12,7 +12,7 @@ restyled with Typst:
     typst compile slips.typ slips.pdf
 
 The slip content, the field positions inside a slip, and the command line
-options follow gpg-key2ps; `-o` and `--qr` are extensions.
+options follow gpg-key2ps; `-i`, `-o`, and `--qr` are extensions.
 """
 
 from __future__ import annotations
@@ -211,6 +211,16 @@ def list_keys(gnupgbin: str, patterns: Sequence[str]) -> bytes:
     """Run gpg and return its colon-separated key listing on stdout."""
     result = subprocess.run(
         [gnupgbin, "--list-key", "--with-fingerprint", "--with-colons", *patterns],
+        stdout=subprocess.PIPE,
+        check=False,
+    )
+    return result.stdout
+
+
+def show_keys(gnupgbin: str, source: str) -> bytes:
+    """List the keys in a file or on stdin (`-`) without importing them."""
+    result = subprocess.run(
+        [gnupgbin, "--show-keys", "--with-fingerprint", "--with-colons", source],
         stdout=subprocess.PIPE,
         check=False,
     )
@@ -539,6 +549,12 @@ def build_parser(stdout: TextIO, stderr: TextIO) -> Parser:
         "-v", "--version", action="version", version=f"{PROGRAM} {VERSION}", help="print version and exit"
     )
     parser.add_argument("-p", "--paper-size", metavar="NAME", help="paper size (default: a4)")
+    parser.add_argument(
+        "-i",
+        "--input",
+        metavar="FILE",
+        help="read keys from FILE instead of the keyring (use - for stdin)",
+    )
     parser.add_argument("-o", "--output", metavar="FILE", help="write the Typst source to FILE instead of stdout")
     parser.add_argument("-s", "--show-subkeys", action="store_true", help="print subkey information on the slips")
     parser.add_argument(
@@ -554,15 +570,20 @@ def build_parser(stdout: TextIO, stderr: TextIO) -> Parser:
     parser.add_argument(
         "patterns",
         metavar="keyid-or-name",
-        nargs="+",
+        nargs="*",
         help="keys to print, as accepted by gpg --list-keys",
     )
     return parser
 
 
 def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO) -> int:
+    parser = build_parser(stdout, stderr)
     try:
-        options = build_parser(stdout, stderr).parse_intermixed_args(argv)
+        options = parser.parse_intermixed_args(argv)
+        if options.input is None and not options.patterns:
+            parser.error("pass keyid-or-name patterns or --input FILE")
+        if options.input is not None and options.patterns:
+            parser.error("keyid-or-name patterns cannot be combined with --input")
     except SystemExit as error:
         return int(error.code or 0)
 
@@ -574,7 +595,10 @@ def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO) -> int:
 
     gnupgbin = os.environ.get("GNUPGBIN", "gpg")
     try:
-        colon_output = list_keys(gnupgbin, options.patterns)
+        if options.input is not None:
+            colon_output = show_keys(gnupgbin, options.input)
+        else:
+            colon_output = list_keys(gnupgbin, options.patterns)
     except FileNotFoundError:
         print(f'{PROGRAM}: cannot run "{gnupgbin}"', file=stderr)
         return 1

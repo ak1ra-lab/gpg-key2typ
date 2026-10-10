@@ -163,17 +163,27 @@ class CliTests(unittest.TestCase):
 
     def fake_gpg_env(self, tmp: str) -> dict[str, str]:
         fake = Path(tmp) / "fake-gpg"
-        fake.write_text('#!/bin/sh\ncat "$FAKE_GPG_DATA"\n', encoding="utf-8")
+        fake.write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$@" > "$FAKE_GPG_ARGS"\ncat "$FAKE_GPG_DATA"\n',
+            encoding="utf-8",
+        )
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
         data = Path(tmp) / "keys.txt"
         data.write_bytes(FIXTURE)
-        return {"GNUPGBIN": str(fake), "FAKE_GPG_DATA": str(data)}
+        return {
+            "GNUPGBIN": str(fake),
+            "FAKE_GPG_DATA": str(data),
+            "FAKE_GPG_ARGS": str(Path(tmp) / "args.txt"),
+        }
+
+    def fake_gpg_args(self, env: dict[str, str]) -> list[str]:
+        return Path(env["FAKE_GPG_ARGS"]).read_text(encoding="utf-8").splitlines()
 
     def test_no_arguments_prints_usage(self):
         code, _, stderr = self.run_cli([])
         self.assertEqual(code, 1)
         self.assertIn("usage:", stderr)
-        self.assertIn("the following arguments are required: keyid-or-name", stderr)
+        self.assertIn("pass keyid-or-name patterns or --input FILE", stderr)
 
     def test_unknown_revoked_style(self):
         code, _, stderr = self.run_cli(["-r", "nope", "Test User"])
@@ -223,6 +233,32 @@ class CliTests(unittest.TestCase):
             code, stdout, stderr = self.run_cli(["Test User", "-p", "a4", "-1"], env=self.fake_gpg_env(tmp))
         self.assertEqual(code, 0, stderr)
         self.assertIn("#grid(columns: (slip-w),", stdout)
+
+    def test_input_file_reads_with_show_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self.fake_gpg_env(tmp)
+            source = Path(tmp) / "pub.asc"
+            source.write_bytes(FIXTURE)
+            code, stdout, stderr = self.run_cli(["-i", str(source)], env=env)
+            args = self.fake_gpg_args(env)
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(args, ["--show-keys", "--with-fingerprint", "--with-colons", str(source)])
+        self.assertIn("#grid(columns: (slip-w, slip-w)", stdout)
+
+    def test_input_stdin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self.fake_gpg_env(tmp)
+            code, stdout, stderr = self.run_cli(["-i", "-"], env=env)
+            args = self.fake_gpg_args(env)
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(args, ["--show-keys", "--with-fingerprint", "--with-colons", "-"])
+        self.assertIn("#grid(", stdout)
+
+    def test_input_cannot_be_combined_with_patterns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _, stderr = self.run_cli(["-i", "keys.asc", "Test User"], env=self.fake_gpg_env(tmp))
+        self.assertEqual(code, 1)
+        self.assertIn("cannot be combined with --input", stderr)
 
     def test_output_file(self):
         with tempfile.TemporaryDirectory() as tmp:

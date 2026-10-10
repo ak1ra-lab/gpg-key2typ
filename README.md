@@ -22,6 +22,10 @@ typst compile slips.typ slips.pdf
 
 # or straight to a PDF
 ./gpg-key2typ Alice Bob | typst compile - slips.pdf
+
+# or from a downloaded key file (or stdin), without importing it:
+./gpg-key2typ -i alice-pubkey.asc > slips.typ
+curl -s https://example.org/alice.asc | ./gpg-key2typ -i - > slips.typ
 ```
 
 The output is one landscape sheet filled with identical slips — two columns of
@@ -56,6 +60,7 @@ just install
 | Option | Description |
 | --- | --- |
 | `-p, --paper-size NAME` | Sheet size. Common names (`a4`, `a3`, `a5`, `b5`, `letter`, `legal`, …) are built in; other names are resolved with libpaper's `paperconf` when installed. Default: `a4`. |
+| `-i, --input FILE` | Read keys from `FILE` instead of the keyring (`-` reads stdin), so they do not have to be imported first *(extension)*. |
 | `-o, --output FILE` | Write the Typst source to `FILE` instead of stdout *(extension)*. |
 | `-s, --show-subkeys` | Print subkey information on the slips. |
 | `-r, --revoked-style ST` | How to mark revoked User IDs and subkeys: `hide` (default), `show`, `grey`, `note` (append `[revoked]`), or `strike`. |
@@ -65,7 +70,9 @@ just install
 | `-v, --version` | Print version and exit. |
 
 The key arguments are the same patterns `gpg --list-keys` accepts: a key ID,
-a fingerprint, or a (partial) name. Environment variables: `GNUPGBIN` (gpg
+a fingerprint, or a (partial) name. `--input` reads keys from a file or stdin
+via `gpg --show-keys` instead, so they are listed without being imported, and
+cannot be combined with key patterns. Environment variables: `GNUPGBIN` (gpg
 binary, default `gpg`), `GNUPGHOME` (keyring; gpg reads it itself), and
 `PAPERSIZE` (libpaper paper name).
 
@@ -86,8 +93,8 @@ replacement for reading it aloud; `--qr` adds it when you want it.
 
 ## Differences from gpg-key2ps
 
-- Typst source instead of PostScript, written to stdout; `-o` and `--qr` are
-  extensions, everything else mirrors the original options.
+- Typst source instead of PostScript, written to stdout; `-i`, `-o`, and
+  `--qr` are extensions, everything else mirrors the original options.
 - The default paper is always A4; gpg-key2ps follows libpaper's
   `/etc/papersize`. Common names are built in, and `paperconf` resolves other
   names when it is installed.
