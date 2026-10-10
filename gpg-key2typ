@@ -17,16 +17,16 @@ options follow gpg-key2ps; `-o` and `--qr` are extensions.
 
 from __future__ import annotations
 
-import getopt
+import argparse
 import os
 import re
 import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import Any, TextIO
 
 PROGRAM = "gpg-key2typ"
 VERSION = "0.1.0"
@@ -140,16 +140,6 @@ class Line:
 class Key:
     lines: list[Line] = field(default_factory=list)
     fingerprint: str = ""
-
-
-@dataclass(frozen=True)
-class Options:
-    paper_size: str | None = None
-    output: str | None = None
-    show_subkeys: bool = False
-    revoked_style: str = "hide"
-    one_column: bool = False
-    qr: bool = False
 
 
 @dataclass(frozen=True)
@@ -372,7 +362,7 @@ def key_height_pt(key: Key, with_qr: bool) -> float:
     return height
 
 
-def compute_layout(keys: Sequence[Key], paper: Paper, one_column: bool, with_qr: bool, stderr: IO[str]) -> Layout:
+def compute_layout(keys: Sequence[Key], paper: Paper, one_column: bool, with_qr: bool, stderr: TextIO) -> Layout:
     columns = 1 if one_column else 2
     content_width_pt = paper.height_pt - 2 * PAGE_MARGIN_PT
     content_height_pt = paper.width_pt - 2 * PAGE_MARGIN_PT
@@ -507,77 +497,74 @@ def _typst_string(value: str) -> str:
 # Command line
 # --------------------------------------------------------------------------
 
-USAGE = f"""\
-{PROGRAM} {VERSION} - print OpenPGP keysigning slips as Typst source
-Usage: {PROGRAM} [options] keyid-or-name ...
-Options:
- -p, --paper-size NAME    paper size (default: a4)
- -o, --output FILE        write the Typst source to FILE (default: stdout)
- -s, --show-subkeys       print subkey information on the slips
- -r, --revoked-style ST   hide | show | grey | note | strike (default: hide)
- -1                       print one column of slips instead of two
-     --qr                 add a QR code with the fingerprint to each key
- -h, --help               print this help and exit
- -v, --version            print version and exit
-"""
 
-SHORT_OPTIONS = "hvs1p:r:o:"
-LONG_OPTIONS = [
-    "help",
-    "version",
-    "show-subkeys",
-    "paper-size=",
-    "revoked-style=",
-    "output=",
-    "qr",
-]
+class Parser(argparse.ArgumentParser):
+    """An ArgumentParser that reports to the streams passed to run().
+
+    argparse ordinarily writes to the process stdout/stderr and exits with
+    status 2 on usage errors; run() injects its streams for testability and
+    keeps gpg-key2ps's status 1, so both are overridden.
+    """
+
+    def __init__(self, stdout: TextIO, stderr: TextIO, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._stdout = stdout
+        self._stderr = stderr
+
+    def _print_message(self, message: str | None, file: TextIO | None = None) -> None:
+        if not message:
+            return
+        if file is None or file is sys.stdout:
+            self._stdout.write(message)
+        elif file is sys.stderr:
+            self._stderr.write(message)
+        else:
+            file.write(message)
+
+    def error(self, message: str) -> None:
+        self.print_usage(self._stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
 
 
-def usage(stream: IO[str]) -> None:
-    stream.write(USAGE)
+def build_parser(stdout: TextIO, stderr: TextIO) -> Parser:
+    parser = Parser(
+        stdout,
+        stderr,
+        prog=PROGRAM,
+        description="Print OpenPGP keysigning slips as Typst source.",
+        add_help=False,
+    )
+    parser.add_argument("-h", "--help", action="help", help="print this help and exit")
+    parser.add_argument(
+        "-v", "--version", action="version", version=f"{PROGRAM} {VERSION}", help="print version and exit"
+    )
+    parser.add_argument("-p", "--paper-size", metavar="NAME", help="paper size (default: a4)")
+    parser.add_argument("-o", "--output", metavar="FILE", help="write the Typst source to FILE instead of stdout")
+    parser.add_argument("-s", "--show-subkeys", action="store_true", help="print subkey information on the slips")
+    parser.add_argument(
+        "-r",
+        "--revoked-style",
+        metavar="STYLE",
+        choices=REVOKED_STYLES,
+        default="hide",
+        help="how to mark revoked User IDs and subkeys (default: hide)",
+    )
+    parser.add_argument("-1", action="store_true", dest="one_column", help="print one column of slips instead of two")
+    parser.add_argument("--qr", action="store_true", help="add a QR code with the fingerprint to each key block")
+    parser.add_argument(
+        "patterns",
+        metavar="keyid-or-name",
+        nargs="+",
+        help="keys to print, as accepted by gpg --list-keys",
+    )
+    return parser
 
 
-def run(argv: Sequence[str], stdout: IO[str], stderr: IO[str]) -> int:
+def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO) -> int:
     try:
-        parsed, patterns = getopt.gnu_getopt(argv, SHORT_OPTIONS, LONG_OPTIONS)
-    except getopt.GetoptError as error:
-        print(f"{PROGRAM}: {error}", file=stderr)
-        usage(stderr)
-        return 1
-
-    options = Options()
-    want_help = want_version = False
-    for option, value in parsed:
-        if option in ("-h", "--help"):
-            want_help = True
-        elif option in ("-v", "--version"):
-            want_version = True
-        elif option in ("-s", "--show-subkeys"):
-            options = replace(options, show_subkeys=True)
-        elif option in ("-p", "--paper-size"):
-            options = replace(options, paper_size=value)
-        elif option in ("-r", "--revoked-style"):
-            options = replace(options, revoked_style=value)
-        elif option in ("-o", "--output"):
-            options = replace(options, output=value)
-        elif option == "-1":
-            options = replace(options, one_column=True)
-        elif option == "--qr":
-            options = replace(options, qr=True)
-
-    if want_help:
-        usage(stdout)
-        return 0
-    if want_version:
-        print(f"{PROGRAM} {VERSION}", file=stdout)
-        return 0
-    if options.revoked_style not in REVOKED_STYLES:
-        print(f'Unknown revoked-style "{options.revoked_style}".', file=stderr)
-        usage(stderr)
-        return 1
-    if not patterns:
-        usage(stderr)
-        return 1
+        options = build_parser(stdout, stderr).parse_intermixed_args(argv)
+    except SystemExit as error:
+        return int(error.code or 0)
 
     try:
         paper = resolve_paper(options.paper_size)
@@ -587,7 +574,7 @@ def run(argv: Sequence[str], stdout: IO[str], stderr: IO[str]) -> int:
 
     gnupgbin = os.environ.get("GNUPGBIN", "gpg")
     try:
-        colon_output = list_keys(gnupgbin, patterns)
+        colon_output = list_keys(gnupgbin, options.patterns)
     except FileNotFoundError:
         print(f'{PROGRAM}: cannot run "{gnupgbin}"', file=stderr)
         return 1

@@ -62,9 +62,7 @@ class ParseTests(unittest.TestCase):
         keys = parse()
         self.assertEqual(len(keys), 1)
         self.assertEqual([line.kind for line in keys[0].lines], ["pub", "fpr", "uid"])
-        self.assertEqual(
-            keys[0].fingerprint, "0123456789ABCDEF0123456789ABCDEF01234567"
-        )
+        self.assertEqual(keys[0].fingerprint, "0123456789ABCDEF0123456789ABCDEF01234567")
 
     def test_show_subkeys_keeps_revoked_subkeys(self):
         keys = parse(revoked_style="note", show_subkeys=True)
@@ -100,7 +98,7 @@ class RenderTests(unittest.TestCase):
     def test_grid_tiles_the_slips(self):
         document, layout = render(revoked_style="note", show_subkeys=True)
         self.assertIn("#grid(columns: (slip-w, slip-w)", document)
-        self.assertIn("..range(%d).map(_ => slip)" % layout.slip_count, document)
+        self.assertIn(f"..range({layout.slip_count}).map(_ => slip)", document)
         self.assertIn('text("pub")', document)
         self.assertIn(" [revoked]", document)
 
@@ -113,9 +111,7 @@ class RenderTests(unittest.TestCase):
     def test_qr_lives_in_the_left_gutter(self):
         document, _ = render(qr=True)
         self.assertIn('#import "@preview/qrypst:0.1.1": qr', document)
-        self.assertIn(
-            'qr("0123456789ABCDEF0123456789ABCDEF01234567", module: ', document
-        )
+        self.assertIn('qr("0123456789ABCDEF0123456789ABCDEF01234567", module: ', document)
         self.assertIn(f"place(top + left, dx: {gpg_key2typ.QR_X_PT:g}pt", document)
 
     def test_qr_is_optional(self):
@@ -128,8 +124,7 @@ class RenderTests(unittest.TestCase):
         self.assertIn("scale(x: 100% * (avail / natural)", document)
         # User IDs start in the summary column, right after the label.
         self.assertIn(
-            'put(50pt, 18.0000pt, text("uid")) + '
-            'put(70pt, 329.1024pt, text("Test User <test@example.org>"))',
+            'put(50pt, 18.0000pt, text("uid")) + put(70pt, 329.1024pt, text("Test User <test@example.org>"))',
             document,
         )
         self.assertNotIn("put-uid", document)
@@ -147,8 +142,7 @@ class RenderTests(unittest.TestCase):
         # and the date at x = 150pt, so it is condensed to 78pt instead of
         # running into the date.
         self.assertIn(
-            'put(70pt, 78.0000pt, text("eddsa255/B2C39DE4")) + '
-            'put(150pt, 249.1024pt, text("1742842581"))',
+            'put(70pt, 78.0000pt, text("eddsa255/B2C39DE4")) + put(150pt, 249.1024pt, text("1742842581"))',
             document,
         )
 
@@ -178,12 +172,20 @@ class CliTests(unittest.TestCase):
     def test_no_arguments_prints_usage(self):
         code, _, stderr = self.run_cli([])
         self.assertEqual(code, 1)
-        self.assertIn("Usage:", stderr)
+        self.assertIn("usage:", stderr)
+        self.assertIn("the following arguments are required: keyid-or-name", stderr)
 
     def test_unknown_revoked_style(self):
         code, _, stderr = self.run_cli(["-r", "nope", "Test User"])
         self.assertEqual(code, 1)
-        self.assertIn('Unknown revoked-style "nope".', stderr)
+        self.assertIn("invalid choice: 'nope'", stderr)
+
+    def test_help(self):
+        code, stdout, stderr = self.run_cli(["--help"])
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("usage:", stdout)
+        self.assertIn("--paper-size", stdout)
 
     def test_version(self):
         code, stdout, _ = self.run_cli(["--version"])
@@ -203,9 +205,7 @@ class CliTests(unittest.TestCase):
 
     def test_end_to_end_with_fake_gpg(self):
         with tempfile.TemporaryDirectory() as tmp:
-            code, stdout, stderr = self.run_cli(
-                ["-p", "a4", "Test User"], env=self.fake_gpg_env(tmp)
-            )
+            code, stdout, stderr = self.run_cli(["-p", "a4", "Test User"], env=self.fake_gpg_env(tmp))
         self.assertEqual(code, 0, stderr)
         self.assertIn("width: 297.000mm", stdout)
         self.assertIn("height: 210.000mm", stdout)
@@ -213,12 +213,16 @@ class CliTests(unittest.TestCase):
 
     def test_end_to_end_defaults_to_a4(self):
         with tempfile.TemporaryDirectory() as tmp:
-            code, stdout, stderr = self.run_cli(
-                ["Test User"], env=self.fake_gpg_env(tmp)
-            )
+            code, stdout, stderr = self.run_cli(["Test User"], env=self.fake_gpg_env(tmp))
         self.assertEqual(code, 0, stderr)
         self.assertIn("width: 297.000mm", stdout)
         self.assertIn("height: 210.000mm", stdout)
+
+    def test_options_may_follow_the_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, stdout, stderr = self.run_cli(["Test User", "-p", "a4", "-1"], env=self.fake_gpg_env(tmp))
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("#grid(columns: (slip-w),", stdout)
 
     def test_output_file(self):
         with tempfile.TemporaryDirectory() as tmp:
