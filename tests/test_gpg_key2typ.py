@@ -128,11 +128,29 @@ class RenderTests(unittest.TestCase):
         self.assertIn("scale(x: 100% * (avail / natural)", document)
         # User IDs start in the summary column, right after the label.
         self.assertIn(
-            'put(50pt, 349.1024pt, text("uid")) + '
+            'put(50pt, 18.0000pt, text("uid")) + '
             'put(70pt, 329.1024pt, text("Test User <test@example.org>"))',
             document,
         )
         self.assertNotIn("put-uid", document)
+
+    def test_key_summary_stops_before_the_date_column(self):
+        output = (
+            b"pub:-:255:22:762F67A0B2C39DE4:1742842581:1995130581::-:::scSC:::::"
+            b"ed25519:::0:\n"
+            b"fpr:::::::::41587F7DB8C774BCCF131416762F67A0B2C39DE4:\n"
+        )
+        keys = gpg_key2typ.parse_keys(output, "hide", False)
+        layout = gpg_key2typ.compute_layout(keys, A4, False, False, io.StringIO())
+        document = gpg_key2typ.render_document(keys, layout, "hide", False)
+        # `eddsa255/B2C39DE4` is wider than the 80pt column between x = 70pt
+        # and the date at x = 150pt, so it is condensed to 78pt instead of
+        # running into the date.
+        self.assertIn(
+            'put(70pt, 78.0000pt, text("eddsa255/B2C39DE4")) + '
+            'put(150pt, 249.1024pt, text("1742842581"))',
+            document,
+        )
 
     def test_qr_version_grows_with_the_fingerprint(self):
         v4_module, v4_box = gpg_key2typ.qr_geometry("A" * 40)

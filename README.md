@@ -96,9 +96,9 @@ replacement for reading it aloud; `--qr` adds it when you want it.
   are grouped like v4 ones; gpg-key2ps only knows v3 and v4.
 - A User ID's value sits right after the `uid` label (x = 70 pt) instead of
   gpg-key2ps's far-right column (x = 200 pt), so long User IDs keep the full
-  line width; text that would still leave a slip is condensed horizontally
-  until it fits, where gpg-key2ps clips it at the column edge. `-1` gives
-  long lines the most room.
+  line width; a field that would overrun the next column (or the slip edge)
+  is condensed horizontally until it fits, where gpg-key2ps clips it at the
+  column edge. `-1` gives long lines the most room.
 - The separator line between keys counts towards the slip height, a slip that
   does not fit the sheet warns on stderr, and the last slip is not clipped.
 - The creation date is printed as a Unix timestamp — deliberately, because

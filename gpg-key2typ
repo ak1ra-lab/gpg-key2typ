@@ -39,6 +39,8 @@ MM_PER_PT = 25.4 / 72.0
 LINE_HEIGHT_PT = 10.0
 SLIP_PAD_Y_PT = 5.0
 SLIP_STROKE_PT = 0.5
+# Clear space kept before the next field when a run is condensed.
+FIELD_GAP_PT = 2.0
 PAGE_MARGIN_PT = 7 * 72 / 25.4
 LABEL_X_PT = 50.0
 VALUE_X_PT = 70.0
@@ -491,11 +493,12 @@ def _row_code(line: Line, revoked_style: str, slip_width_pt: float) -> str:
         runs[-1] = Run(runs[-1].x, runs[-1].text + " [revoked]")
 
     pieces = []
-    for run in runs:
+    for index, run in enumerate(runs):
         fill = "fill: luma(50%), " if grey else ""
-        # Text that would leave the slip is condensed to fit instead of
-        # running into the neighbouring column.
-        avail = max(slip_width_pt - run.x - 2.0, 1.0)
+        # Text is condensed to fit the space up to the next field, or to
+        # the slip edge for the last one, instead of running into it.
+        limit = runs[index + 1].x if index + 1 < len(runs) else slip_width_pt
+        avail = max(limit - run.x - FIELD_GAP_PT, 1.0)
         pieces.append(
             f"put({run.x:g}pt, {avail:.4f}pt, text({fill}{_typst_string(run.text)}))"
         )

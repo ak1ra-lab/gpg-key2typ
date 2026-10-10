@@ -69,7 +69,7 @@ gpg-key2ps 没有 QR 码，所以这里默认也不加。`--qr` 会在每个密�
 - 默认纸张固定为 A4；gpg-key2ps 跟随 libpaper 的 `/etc/papersize`。常见尺寸内置，装有 `paperconf` 时可解析其它名字。
 - User ID 保留 UTF-8；gpg-key2ps 会把它们转成 Latin-1。
 - 支持 v6 指纹（64 位十六进制，[RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html)），分组方式与 v4 一致；gpg-key2ps 只认 v3 和 v4。
-- User ID 的值紧跟在 `uid` 标签之后（x = 70 pt），不再用 gpg-key2ps 的远端值栏（x = 200 pt），长 UID 因此能用满整行；若仍会超出纸条，就横向压缩到纸条内（gpg-key2ps 会直接裁掉）。`-1` 能给长行留出最多空间。
+- User ID 的值紧跟在 `uid` 标签之后（x = 70 pt），不再用 gpg-key2ps 的远端值栏（x = 200 pt），长 UID 因此能用满整行；若某一栏会压到下一栏（或超出纸条），就横向压缩使其放下（gpg-key2ps 会直接裁掉）。`-1` 能给长行留出最多空间。
 - 密钥之间的分隔线计入纸条高度；纸条放不下整页时在 stderr 警告；最后一张纸条不会被裁掉。
 - 创建日期打印为 Unix 时间戳——这是刻意的，因为 gpg-key2ps 就是这么打的。
 - 原先 90 × 55 mm 名片版式及其 Typst 模板已移除；本项目只做指纹纸条这件事。
