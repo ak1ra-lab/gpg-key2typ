@@ -1,6 +1,6 @@
 # gpg-key2typ
 
-[![GitHub](https://img.shields.io/badge/GitHub-ak1ra--lab%2Fpgp--info--card-181717?logo=github&logoColor=white)](https://github.com/ak1ra-lab/pgp-info-card)
+[![GitHub](https://img.shields.io/badge/GitHub-ak1ra--lab%2Fgpg--key2typ-181717?logo=github&logoColor=white)](https://github.com/ak1ra-lab/gpg-key2typ)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Typst 0.13+](https://img.shields.io/badge/Typst-0.13%2B-239DAD?logo=typst&logoColor=white)](https://typst.app/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
