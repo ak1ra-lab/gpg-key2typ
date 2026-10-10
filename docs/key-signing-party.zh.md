@@ -2,7 +2,7 @@
 
 [English](key-signing-party.md) · 简体中文
 
-[gpg-key2typ](../README.zh.md) 的流程文档：线下怎么交换纸条、回家认证之前要核对什么，以及怎么用 `caff` 自动化聚会后的工作。
+[gpg-key2typ](../README.zh.md) 的流程文档：线下怎么交换纸条，以及回家认证之前要核对什么。
 
 ## 两阶段的 keysigning 流程
 
@@ -44,7 +44,7 @@ flowchart TD
 1. 准备好指纹纸条（`gpg-key2ps`，或者用本仓库的 [`gpg-key2typ`](../README.zh.md) 以 Typst 渲染）；自己的指纹要熟到能核对。
 2. 和每个人交换纸条。你读出自己的指纹，对方跟着核对；双方各自记下（或扫描）对方的指纹。一定核对完整指纹——扫出来的 QR 码顶多只是顺手用的。
 3. UID 是真名，就按活动或双方约定的签名规则核对政府签发的带照片证件；UID 是化名，不用查证件，改成约定一个能找到这个化名的在线渠道（Telegram、Matrix、Signal、电子邮件等）。
-4. 把核对过的东西记下来：指纹、渠道、核对内容、日期、活动。按名单进行的活动，就在打印的名单上勾选 "Fingerprint OK" 和 "ID OK"——这份标注过的名单之后可以直接喂给 `caff`。
+4. 把核对过的东西记下来：指纹、渠道、核对内容、日期、活动。按名单进行的活动，就在打印的名单上勾选 "Fingerprint OK" 和 "ID OK"。
 5. 私钥留在家里。这一步不用电脑，也不用联网。
 
 ```mermaid
@@ -124,36 +124,16 @@ flowchart LR
 
 ### 注意事项
 
-- **私钥持有证明止步于 subkey。** 挑战是用对方的公钥加密的，但只有加密 subkey 的私钥能解开，所以证明的是对方握有*那个 subkey* 的私钥，而不是签发认证的主密钥。`caff` 就是这么做的，大家一般也接受；要求更高的话，可以请对方用主密钥重新签一次。签名 subkey 做的签名也只能证明那个 subkey，证明不了主密钥的私钥。
+- **私钥持有证明止步于 subkey。** 挑战是用对方的公钥加密的，但只有加密 subkey 的私钥能解开，所以证明的是对方握有*那个 subkey* 的私钥，而不是签发认证的主密钥。这通常是可以接受的；要求更高的话，可以请对方用主密钥重新签一次。签名 subkey 做的签名也只能证明那个 subkey，证明不了主密钥的私钥。
 - **一把 key 只有一个要核对的指纹。** 阶段一交换、阶段二比对的都是主密钥的指纹。subkey 也有自己的指纹，但上面没有 User ID；它们与主密钥的绑定由主密钥签发的 subkey binding signature 保证，不用逐个核对。
-- **认证按 UID 分别签。** OpenPGP 认证由主密钥对单个 User ID 签发。只认证你确实核对过绑定关系的 UID——回信的邮箱、渠道有应答的化名、证件上的姓名。`caff` 每个 UID 单独发一封信，就是为这个。
+- **认证按 UID 分别签。** OpenPGP 认证由主密钥对单个 User ID 签发。只认证你确实核对过绑定关系的 UID——回信的邮箱、渠道有应答的化名、证件上的姓名。
 - **指纹长度不一样。** 纸条按 40 位十六进制字符的 v4 指纹（SHA-1）排版，这是最常见的情形。v6 密钥（[RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html)）是 64 位（SHA-256）；`gpg-key2typ` 会完整打印，但一行会很长，用 `-1`（一栏）给它留足空间。`--rfc4880bis` 草案里的实验性 v5 密钥长度一样。
 - **公不公开由本人决定。** 没有同意，别把他人的密钥或你的认证传上 keyserver。[keys.openpgp.org](https://keys.openpgp.org/about/faq) 默认不传播第三方认证（只传播第一方自证的），所以在 key signing party 上签的名不会经它扩散；传统 keyserver 和项目 keyring（比如 Debian 的）另说。
 - **认证可以撤销。** 事后发现核对错了，就撤销认证（`gpg --edit-key` → `revsig`）；自己密钥的吊销证书也要收好。
 
-## 用 `caff` 自动化阶段二
+## 自动化工具（超出本文档范围）
 
-[`signing-party`](https://salsa.debian.org/signing-party-team/signing-party) 里的 `caff` 能接管聚会之后的活：下载密钥、按标注过的名单核对、签名、再把签名寄回来。
-
-通常的流程：
-
-1. 活动前，组织者用 `gpgparticipants` 生成参与者名单（带校验和行）并发布。
-2. 活动上，每人核对指纹和身份，在自己那份打印名单上勾选 "Fingerprint OK"、"ID OK"（还有校验和）方框。
-3. 回家后：
-
-   ```sh
-   caff < ksp-annotated.txt
-   ```
-
-   `caff` 会下载密钥（也可以用 `--key-file` / `--keys-from-gnupg`），只给 "Fingerprint OK" 和 "ID OK" 都勾上的密钥签名，然后把每个 User ID 的已签名密钥寄到该 UID 的邮箱，用密钥自身加密。
-
-4. 对方用私钥解密、导入签名，再决定是否公开。
-
-几点注意：
-
-- **`caff` 不做 challenge–response。** 它先签名，再把签名后的密钥用密钥自身加密寄出：只有拿着私钥的人能解开，但签名的人收不到明确回执。想要确认，就在签名前手动做一轮 challenge–response，或者跳过 `caff` 的发信步骤（`-m no`）。
-- `caff` 只往电子邮件 UID 发信，所以没有邮箱的化名密钥得手动处理。
-- `caff` 有自己的 GnuPG 目录（`~/.caff/gnupghome`），keyserver 之类的设置要写进 `~/.caff/gnupghome/gpg.conf`。在 `~/.caffrc` 里设 `ask-sign`，签名前会停下来等你，主密钥离线时很有用。
+[`signing-party`](https://salsa.debian.org/signing-party-team/signing-party) 软件包里的 `caff` 等工具可以简化聚会之后的部分工作。具体用法超出本文档的范围，想用的话可以查阅 [`caff(1)`](https://manpages.debian.org/unstable/signing-party/caff.1.en.html) 等文档。
 
 ## 参考资料
 
