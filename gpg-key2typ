@@ -23,9 +23,10 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import IO, Sequence
+from typing import IO
 
 PROGRAM = "gpg-key2typ"
 VERSION = "0.1.0"
@@ -251,8 +252,7 @@ def parse_keys(colon_output: bytes, revoked_style: str, show_subkeys: bool) -> l
                         [
                             Run(
                                 VALUE_X_PT,
-                                "Key fingerprint = "
-                                + format_fingerprint(key.fingerprint),
+                                "Key fingerprint = " + format_fingerprint(key.fingerprint),
                             )
                         ],
                     )
@@ -321,9 +321,7 @@ def _text_field(fields: list[bytes], index: int) -> str:
     raw = fields[index] if index < len(fields) else b""
     # gpg escapes bytes that are not safely printable as \xNN.  Undo the
     # escapes first, then decode the result as UTF-8 so Typst gets Unicode.
-    unescaped = re.sub(
-        rb"\\x([0-9A-Fa-f]{2})", lambda match: bytes([int(match.group(1), 16)]), raw
-    )
+    unescaped = re.sub(rb"\\x([0-9A-Fa-f]{2})", lambda match: bytes([int(match.group(1), 16)]), raw)
     return unescaped.decode("utf-8", "replace")
 
 
@@ -374,17 +372,13 @@ def key_height_pt(key: Key, with_qr: bool) -> float:
     return height
 
 
-def compute_layout(
-    keys: Sequence[Key], paper: Paper, one_column: bool, with_qr: bool, stderr: IO[str]
-) -> Layout:
+def compute_layout(keys: Sequence[Key], paper: Paper, one_column: bool, with_qr: bool, stderr: IO[str]) -> Layout:
     columns = 1 if one_column else 2
     content_width_pt = paper.height_pt - 2 * PAGE_MARGIN_PT
     content_height_pt = paper.width_pt - 2 * PAGE_MARGIN_PT
     slip_width_pt = content_width_pt / columns
     slip_height_pt = (
-        2 * SLIP_PAD_Y_PT
-        + sum(key_height_pt(key, with_qr) for key in keys)
-        + (len(keys) - 1) * LINE_HEIGHT_PT
+        2 * SLIP_PAD_Y_PT + sum(key_height_pt(key, with_qr) for key in keys) + (len(keys) - 1) * LINE_HEIGHT_PT
     )
     rows = int(content_height_pt // slip_height_pt)
     if rows < 1:
@@ -393,14 +387,10 @@ def compute_layout(
             "Warning: the slip is taller than the paper; it will overflow.",
             file=stderr,
         )
-    return Layout(
-        paper.width_pt, paper.height_pt, columns, slip_width_pt, slip_height_pt, rows
-    )
+    return Layout(paper.width_pt, paper.height_pt, columns, slip_width_pt, slip_height_pt, rows)
 
 
-def render_document(
-    keys: Sequence[Key], layout: Layout, revoked_style: str, with_qr: bool
-) -> str:
+def render_document(keys: Sequence[Key], layout: Layout, revoked_style: str, with_qr: bool) -> str:
     """Render the complete, self-contained Typst document."""
     lines: list[str] = []
     add = lines.append
@@ -463,13 +453,9 @@ def render_document(
     return "\n".join(lines) + "\n"
 
 
-def _key_code(
-    key: Key, with_qr: bool, revoked_style: str, indent: str, slip_width_pt: float
-) -> str:
+def _key_code(key: Key, with_qr: bool, revoked_style: str, indent: str, slip_width_pt: float) -> str:
     height = key_height_pt(key, with_qr)
-    rows = f",\n{indent}  ".join(
-        _row_code(line, revoked_style, slip_width_pt) for line in key.lines
-    )
+    rows = f",\n{indent}  ".join(_row_code(line, revoked_style, slip_width_pt) for line in key.lines)
     body = f"stack(spacing: 0pt,\n{indent}  {rows},\n{indent})"
 
     if with_qr and key.fingerprint:
@@ -499,9 +485,7 @@ def _row_code(line: Line, revoked_style: str, slip_width_pt: float) -> str:
         # the slip edge for the last one, instead of running into it.
         limit = runs[index + 1].x if index + 1 < len(runs) else slip_width_pt
         avail = max(limit - run.x - FIELD_GAP_PT, 1.0)
-        pieces.append(
-            f"put({run.x:g}pt, {avail:.4f}pt, text({fill}{_typst_string(run.text)}))"
-        )
+        pieces.append(f"put({run.x:g}pt, {avail:.4f}pt, text({fill}{_typst_string(run.text)}))")
     if line.revoked and revoked_style == "strike":
         pieces.append(
             f"place(top + left, dx: {RULE_X_PT:g}pt, dy: lh / 2 - {RULE_STROKE_PT / 2:g}pt, "
@@ -515,10 +499,7 @@ _STRING_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\
 
 def _typst_string(value: str) -> str:
     """A Typst string literal: only quote and backslash need escaping."""
-    escaped = "".join(
-        _STRING_ESCAPES.get(char, char if char.isprintable() else " ")
-        for char in value
-    )
+    escaped = "".join(_STRING_ESCAPES.get(char, char if char.isprintable() else " ") for char in value)
     return f'"{escaped}"'
 
 
