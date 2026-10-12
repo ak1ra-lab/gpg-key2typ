@@ -57,8 +57,6 @@ Use the justfile recipes rather than invoking tools directly:
   overlong text is condensed with a Typst `measure`/`scale` helper. An
   experiment that let Typst compute slip heights and rows was abandoned
   because grid rows did not grow reliably; keep the Python-side layout.
-- Session logs live in `.agents/sessions/` (gitignored in the main tree;
-  past logs are kept on the `sessions` branch).
 
 ## Upstream reference
 
