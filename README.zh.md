@@ -7,7 +7,7 @@
 
 [English](README.md) · 简体中文
 
-`gpg-key2typ` 把 GnuPG 密钥串里的 OpenPGP 密钥渲染成 key signing party 用的指纹纸条：一整页带边框的小纸条，每张上都印着所请求密钥的指纹和 User ID。它是 Debian [signing-party](https://salsa.debian.org/signing-party-team/signing-party) 里 [`gpg-key2ps(1)`](https://manpages.debian.org/unstable/signing-party/gpg-key2ps.1.en.html) 的重实现，只是输出 [Typst](https://typst.app/) 源码而不是 PostScript。纸条内容、纸条内的字段位置和命令行选项都沿袭原版。
+`gpg-key2typ` 把 GnuPG 密钥串里的 OpenPGP 密钥渲染成 key signing party 用的指纹纸条：一整页带边框的小纸条，每张上都印着所请求密钥的指纹和 User ID。它是 Debian [signing-party](https://salsa.debian.org/signing-party-team/signing-party) 里 [`gpg-key2ps(1)`](https://manpages.debian.org/unstable/signing-party/gpg-key2ps.1.en.html) 的重实现，只是输出 [Typst](https://typst.app/) 源码而不是 PostScript。纸条的版式和命令行选项沿袭原版；日期、算法名和密钥用途标记则按 gpg 自己的写法打印。
 
 ```sh
 ./gpg-key2typ -p a4 Alice Bob > slips.typ
@@ -24,12 +24,12 @@ curl -s https://example.org/alice.asc | ./gpg-key2typ -i - > slips.typ
 输出是一张横向纸面，平铺着同一张纸条：默认两栏（`-1` 改为一栏），每个密钥块显示
 
 ```text
-pub eddsa255/DF95CC16 1791606480
+pub ed25519/DF95CC16 2026-10-10 [SC]
 Key fingerprint = 21A3 835B 8A4C 5C82 8F8A  218D 4B8C 03A2 DF95 CC16
 uid Alice Example <alice@example.org>
 ```
 
-每个 User ID 一行 `uid`，加 `-s` 时每个子钥再加一行 `sub`。打印出来，沿纸条边框裁开，就可以在活动现场分发了。
+每个 User ID 一行 `uid`，加 `-s` 时每个子钥再加一行 `sub`（`sub cv25519/0FA1B2C3 2026-10-10 [E]`）。打印出来，沿纸条边框裁开，就可以在活动现场分发了。
 
 ## 运行要求
 
@@ -74,9 +74,11 @@ gpg-key2ps 没有 QR 码，所以这里默认也不加。`--qr` 会在每个密�
 - 默认纸张固定为 A4；gpg-key2ps 跟随 libpaper 的 `/etc/papersize`。常见尺寸内置，装有 `paperconf` 时可解析其它名字。
 - User ID 保留 UTF-8；gpg-key2ps 会把它们转成 Latin-1。
 - 支持 v6 指纹（64 位十六进制，[RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html)），分组方式与 v4 一致；gpg-key2ps 只认 v3 和 v4。
+- 密钥按 gpg 的叫法命名：`rsa4096`、`nistp256`，常见 ECC 密钥用曲线名 `ed25519`/`cv25519`；gpg-key2ps 打的是 `eddsa255`/`ecdh255`，其算法表之外的算法一概打 `xxx`。
+- 创建日期打印为 `YYYY-MM-DD`（UTC，同 `gpg --list-keys`），不再是 gpg-key2ps 的原始 Unix 时间戳。
+- 每把密钥末尾带上用途标记（`[SC]`、`[E]` 等），同 `gpg --list-keys`；gpg-key2ps 不打印用途。
 - User ID 的值紧跟在 `uid` 标签之后（x = 70 pt），不再用 gpg-key2ps 的远端值栏（x = 200 pt），长 UID 因此能用满整行；若某一栏会压到下一栏（或超出纸条），就横向压缩使其放下（gpg-key2ps 会直接裁掉）。`-1` 能给长行留出最多空间。
 - 密钥之间的分隔线计入纸条高度；纸条放不下整页时在 stderr 警告；最后一张纸条不会被裁掉。
-- 创建日期打印为 Unix 时间戳——这是刻意的，因为 gpg-key2ps 就是这么打的。
 - 原先 90 × 55 mm 名片版式及其 Typst 模板已移除；本项目只做指纹纸条这件事。
 
 ## Key signing party

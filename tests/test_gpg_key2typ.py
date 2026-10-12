@@ -79,9 +79,41 @@ class ParseTests(unittest.TestCase):
             [
                 (gpg_key2typ.LABEL_X_PT, "pub"),
                 (gpg_key2typ.VALUE_X_PT, "rsa4096/89ABCDEF"),
-                (gpg_key2typ.DATE_X_PT, "1577836800"),
+                (gpg_key2typ.DATE_X_PT, "2020-01-01 [SC]"),
             ],
         )
+
+    def test_sub_line_fields(self):
+        runs = parse(show_subkeys=True)[0].lines[-1].runs
+        self.assertEqual(
+            [(run.x, run.text) for run in runs],
+            [
+                (gpg_key2typ.LABEL_X_PT, "sub"),
+                (gpg_key2typ.VALUE_X_PT, "rsa4096/76543210"),
+                (gpg_key2typ.DATE_X_PT, "2020-01-01 [E]"),
+            ],
+        )
+
+    def test_ecc_keys_use_the_curve_name_like_gpg(self):
+        output = (
+            b"pub:u:255:22:A3FF5582B97B5CCF:1791768204:::u:::scESC:::::ed25519:::0:\n"
+            b"fpr:::::::::B4B2A1DC2E75C9243FEAF2E5A3FF5582B97B5CCF:\n"
+            b"sub:u:255:18:8F9A2FF5FF27B557:1791768204::::::e:::::cv25519::\n"
+            b"fpr:::::::::34F6164096BAC6A9A75716BB8F9A2FF5FF27B557:\n"
+        )
+        keys = gpg_key2typ.parse_keys(output, "hide", True)
+        summaries = [(line.kind, line.runs[1].text) for line in keys[0].lines if line.kind in ("pub", "sub")]
+        self.assertEqual(summaries, [("pub", "ed25519/B97B5CCF"), ("sub", "cv25519/FF27B557")])
+
+    def test_unknown_algorithm_falls_back_like_gpg(self):
+        output = b"pub:u:1024:99:0123456789ABCDEF:1577836800:::u:::scESC::::::::0:\n"
+        keys = gpg_key2typ.parse_keys(output, "hide", False)
+        self.assertEqual(keys[0].lines[0].runs[1].text, "unknown_99/89ABCDEF")
+
+    def test_malformed_algorithm_falls_back_to_xxx(self):
+        output = b"pub:u:1024:x:0123456789ABCDEF:1577836800:::u:::scESC::::::::0:\n"
+        keys = gpg_key2typ.parse_keys(output, "hide", False)
+        self.assertEqual(keys[0].lines[0].runs[1].text, "xxx1024/89ABCDEF")
 
     def test_escaped_utf8_uid(self):
         output = (
@@ -92,6 +124,13 @@ class ParseTests(unittest.TestCase):
         keys = gpg_key2typ.parse_keys(output, "hide", False)
         uid = keys[0].lines[-1].runs[-1]
         self.assertEqual(uid.text, "José <jose@example.org>")
+
+    def test_creation_dates_are_utc_dates_like_gpg(self):
+        self.assertEqual(gpg_key2typ.format_date("1577836800"), "2020-01-01")
+        self.assertEqual(gpg_key2typ.format_date(""), "")
+
+    def test_iso_creation_dates_are_passed_through(self):
+        self.assertEqual(gpg_key2typ.format_date("19660205T091500"), "19660205T091500")
 
 
 class RenderTests(unittest.TestCase):
@@ -131,18 +170,18 @@ class RenderTests(unittest.TestCase):
 
     def test_key_summary_stops_before_the_date_column(self):
         output = (
-            b"pub:-:255:22:762F67A0B2C39DE4:1742842581:1995130581::-:::scSC:::::"
+            b"pub:-:255:22:762F67A0B2C39DE4:1742842581:1995130581::u:::scESC:::::"
             b"ed25519:::0:\n"
             b"fpr:::::::::41587F7DB8C774BCCF131416762F67A0B2C39DE4:\n"
         )
         keys = gpg_key2typ.parse_keys(output, "hide", False)
         layout = gpg_key2typ.compute_layout(keys, A4, False, False, io.StringIO())
         document = gpg_key2typ.render_document(keys, layout, "hide", False)
-        # `eddsa255/B2C39DE4` is wider than the 80pt column between x = 70pt
+        # `ed25519/B2C39DE4` is wider than the 80pt column between x = 70pt
         # and the date at x = 150pt, so it is condensed to 78pt instead of
         # running into the date.
         self.assertIn(
-            'put(70pt, 78.0000pt, text("eddsa255/B2C39DE4")) + put(150pt, 249.1024pt, text("1742842581"))',
+            'put(70pt, 78.0000pt, text("ed25519/B2C39DE4")) + put(150pt, 249.1024pt, text("2025-03-24 [SC]"))',
             document,
         )
 

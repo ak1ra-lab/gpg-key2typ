@@ -11,8 +11,11 @@ restyled with Typst:
     gpg-key2typ -p a4 Alice Bob > slips.typ
     typst compile slips.typ slips.pdf
 
-The slip content, the field positions inside a slip, and the command line
-options follow gpg-key2ps; `-i`, `-o`, and `--qr` are extensions.
+The slip geometry and the command line options follow gpg-key2ps, but
+the content is labelled the way gpg itself prints keys: algorithm and
+curve names (`rsa4096`, `ed25519`, `cv25519`), `YYYY-MM-DD` (UTC)
+creation dates, and capability flags (`[SC]`, `[E]`).  `-i`, `-o`, and
+`--qr` are extensions.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,8 +65,10 @@ QR_QUIET = 4
 # Byte-mode capacities of QR versions 1-10 at error-correction level M.
 QR_BYTE_CAPACITY_M = (14, 26, 42, 62, 84, 106, 122, 152, 180, 213)
 
-# Public key algorithms, as printed by gpg-key2ps.  Unknown values print
-# as "xxx" like the original's catch-all entry for algorithm 20.
+# Public key algorithms, named the way gpg prints them.  ECC keys are
+# named by their curve from the colon listing, so these entries cover
+# records without one; unknown numbers print as "unknown_N" like gpg's
+# own fallback.
 ALGORITHMS = {
     1: "rsa",
     2: "rsa",
@@ -73,7 +79,28 @@ ALGORITHMS = {
     19: "ecdsa",
     20: "xxx",
     22: "eddsa",
+    25: "x25519",
+    26: "x448",
+    27: "ed25519",
+    28: "ed448",
 }
+
+# Algorithms whose key size is printed after the name.  The size of an
+# ECC key follows from its curve, so those names stand alone.
+ALGORITHMS_WITH_BITS = frozenset({1, 2, 3, 16, 17, 18, 19, 20, 22})
+
+# Key capabilities, as gpg labels them in its key listings (`[SC]`,
+# `[E]`).  The colon listing carries the key's own capabilities in field
+# 12 as lower-case letters; gpg prints them in this order.
+CAPABILITIES = (
+    ("s", "S"),
+    ("c", "C"),
+    ("e", "E"),
+    ("a", "A"),
+    ("r", "R"),
+    ("t", "T"),
+    ("g", "G"),
+)
 
 REVOKED_STYLES = ("hide", "show", "grey", "note", "strike")
 
@@ -272,7 +299,7 @@ def _pub_line(fields: list[bytes]) -> Line:
     runs = [
         Run(LABEL_X_PT, "pub"),
         Run(VALUE_X_PT, _key_summary(fields)),
-        Run(DATE_X_PT, _text_field(fields, 5)),
+        Run(DATE_X_PT, _stamp(fields)),
     ]
     if comment := _text_field(fields, 9):
         runs.append(Run(COMMENT_X_PT, comment))
@@ -297,20 +324,41 @@ def _sub_line(fields: list[bytes], revoked_style: str) -> Line | None:
     runs = [
         Run(LABEL_X_PT, "sub"),
         Run(VALUE_X_PT, _key_summary(fields)),
-        Run(DATE_X_PT, _text_field(fields, 5)),
+        Run(DATE_X_PT, _stamp(fields)),
     ]
     return Line("sub", runs, revoked)
 
 
 def _key_summary(fields: list[bytes]) -> str:
-    """`algo bits/KEYID`, e.g. `eddsa255/DF95CC16`, as gpg-key2ps prints it."""
-    length = _text_field(fields, 2)
+    """`curve/KEYID` or `algo+bits/KEYID`, e.g. `ed25519/DF95CC16`.
+
+    ECC keys are named by their curve, as gpg prints them, and the
+    key size is left out because it follows from the curve.
+    """
+    key_id = _text_field(fields, 4)[-8:]
+    if curve := _text_field(fields, 16).strip():
+        return f"{curve}/{key_id}"
     try:
-        algorithm = ALGORITHMS.get(int(_text_field(fields, 3)), "xxx")
+        algorithm = int(_text_field(fields, 3))
     except ValueError:
-        algorithm = "xxx"
-    key_id = _text_field(fields, 4)
-    return f"{algorithm}{length}/{key_id[-8:]}"
+        return f"xxx{_text_field(fields, 2)}/{key_id}"
+    name = ALGORITHMS.get(algorithm, f"unknown_{algorithm}")
+    if algorithm in ALGORITHMS_WITH_BITS:
+        name += _text_field(fields, 2)
+    return f"{name}/{key_id}"
+
+
+def _stamp(fields: list[bytes]) -> str:
+    """`YYYY-MM-DD [CAPS]`, the creation date and the key capabilities."""
+    date = format_date(_text_field(fields, 5))
+    usage = _key_usage(fields)
+    return " ".join(part for part in (date, f"[{usage}]" if usage else "") if part)
+
+
+def _key_usage(fields: list[bytes]) -> str:
+    """The key's own capabilities, e.g. `SC` or `E`, as gpg labels them."""
+    raw = _text_field(fields, 11)
+    return "".join(letter for flag, letter in CAPABILITIES if flag in raw)
 
 
 def _is_revoked(fields: list[bytes]) -> bool:
@@ -339,6 +387,19 @@ def format_fingerprint(fingerprint: str) -> str:
         half = len(groups) // 2
         return " ".join(groups[:half]) + "  " + " ".join(groups[half:])
     return " ".join(groups)
+
+
+def format_date(epoch: str) -> str:
+    """Print gpg's creation timestamp as the `YYYY-MM-DD` date gpg shows.
+
+    gpg stores and prints dates in UTC; anything that is not a plain
+    Unix timestamp (an ISO 8601 stamp from a future gpg, an empty
+    field) is passed through unchanged.
+    """
+    try:
+        return time.strftime("%Y-%m-%d", time.gmtime(int(epoch)))
+    except (ValueError, OverflowError, OSError):
+        return epoch
 
 
 # --------------------------------------------------------------------------

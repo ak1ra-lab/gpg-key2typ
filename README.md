@@ -13,8 +13,8 @@ fingerprints and User IDs. It is a reimplementation of
 [`gpg-key2ps(1)`](https://manpages.debian.org/unstable/signing-party/gpg-key2ps.1.en.html)
 from Debian's [signing-party](https://salsa.debian.org/signing-party-team/signing-party)
 that writes [Typst](https://typst.app/) source instead of PostScript. The slip
-content, the positions inside a slip, and the command line options follow the
-original.
+geometry and the command line options follow the original; dates, algorithm
+names, and key capability flags are printed the way gpg itself labels keys.
 
 ```sh
 ./gpg-key2typ -p a4 Alice Bob > slips.typ
@@ -32,13 +32,14 @@ The output is one landscape sheet filled with identical slips — two columns of
 slips by default, one with `-1` — each key block showing
 
 ```text
-pub eddsa255/DF95CC16 1791606480
+pub ed25519/DF95CC16 2026-10-10 [SC]
 Key fingerprint = 21A3 835B 8A4C 5C82 8F8A  218D 4B8C 03A2 DF95 CC16
 uid Alice Example <alice@example.org>
 ```
 
-plus one `uid` line per User ID and, with `-s`, one `sub` line per subkey.
-Print it, cut along the slip borders, and hand the slips out at the party.
+plus one `uid` line per User ID and, with `-s`, one `sub` line per subkey
+(`sub cv25519/0FA1B2C3 2026-10-10 [E]`). Print it, cut along the slip borders,
+and hand the slips out at the party.
 
 ## Requirements
 
@@ -94,11 +95,18 @@ replacement for reading it aloud; `--qr` adds it when you want it.
 ## Differences from gpg-key2ps
 
 - Typst source instead of PostScript, written to stdout; `-i`, `-o`, and
-  `--qr` are extensions, everything else mirrors the original options.
+  `--qr` are extensions, the remaining options mirror the original.
 - The default paper is always A4; gpg-key2ps follows libpaper's
   `/etc/papersize`. Common names are built in, and `paperconf` resolves other
   names when it is installed.
 - User IDs stay UTF-8; gpg-key2ps re-encodes them as Latin-1.
+- Keys are named the way gpg names them: `rsa4096`, `nistp256`, and the curve
+  names `ed25519`/`cv25519` for the usual ECC keys, where gpg-key2ps prints
+  `eddsa255`/`ecdh255` and `xxx` for algorithms outside its own table.
+- The creation date is printed as `YYYY-MM-DD` (UTC), as in
+  `gpg --list-keys`, instead of gpg-key2ps's raw Unix timestamp.
+- Each key line ends with the key's capabilities (`[SC]`, `[E]`, …) as
+  `gpg --list-keys` marks them; gpg-key2ps prints no capability information.
 - v6 fingerprints (64 hex digits, [RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html))
   are grouped like v4 ones; gpg-key2ps only knows v3 and v4.
 - A User ID's value sits right after the `uid` label (x = 70 pt) instead of
@@ -108,8 +116,6 @@ replacement for reading it aloud; `--qr` adds it when you want it.
   column edge. `-1` gives long lines the most room.
 - The separator line between keys counts towards the slip height, a slip that
   does not fit the sheet warns on stderr, and the last slip is not clipped.
-- The creation date is printed as a Unix timestamp — deliberately, because
-  that is what gpg-key2ps prints.
 - The earlier 90 × 55 mm business-card layout and its Typst template are gone;
   this tool covers the fingerprint-slip use case.
 
